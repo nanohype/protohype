@@ -1,0 +1,37 @@
+[Unit]
+Description=Spastic Memory Service
+After=network.target
+Wants=network.target
+
+[Service]
+Type=simple
+User=spastic
+Group=spastic
+WorkingDirectory=/opt/spastic-memory
+ExecStart=/opt/spastic-memory/venv/bin/spastic-memory
+Restart=on-failure
+RestartSec=5
+
+# Security hardening
+UMask=0077
+NoNewPrivileges=true
+ProtectSystem=strict
+ReadWritePaths=/workspace/.spastic
+
+# Environment
+Environment=SPASTIC_MEMORY_HOST=127.0.0.1
+Environment=SPASTIC_MEMORY_PORT=8765
+Environment=SPASTIC_MEMORY_DB_PATH=/workspace/.spastic/memory.db
+Environment=SPASTIC_MEMORY_SEED_MD_PATH=/workspace/.spastic/memory.md
+Environment=SPASTIC_MEMORY_EMBEDDING_MODEL=all-MiniLM-L6-v2
+Environment=SPASTIC_MEMORY_SUMMARIZE_THRESHOLD=200
+# Override any of the above in:
+EnvironmentFile=-/opt/spastic-memory/.env
+
+# Logging
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=spastic-memory
+
+[Install]
+WantedBy=multi-user.target
