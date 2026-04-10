@@ -1,0 +1,48 @@
+# fly.toml — spastic-dash deployment
+# Deploy: fly deploy --app spastic-dash
+
+app = "spastic-dash"
+primary_region = "iad"
+
+[build]
+  # Uses Dockerfile in this directory
+
+[env]
+  NODE_ENV = "production"
+  PORT = "3000"
+  # SPASTIC_PERF_FILE set to volume mount path
+
+[mounts]
+  # Persistent volume for .spastic-perf.json
+  source = "spastic_data"
+  destination = "/data"
+
+[[services]]
+  protocol = "tcp"
+  internal_port = 3000
+
+  [[services.ports]]
+    port = 80
+    handlers = ["http"]
+    force_https = true
+
+  [[services.ports]]
+    port = 443
+    handlers = ["tls", "http"]
+
+  [services.concurrency]
+    type = "requests"
+    hard_limit = 25
+    soft_limit = 20
+
+  [[services.http_checks]]
+    interval = "30s"
+    timeout = "5s"
+    grace_period = "15s"
+    method = "get"
+    path = "/api/summary"
+
+[vm]
+  cpu_kind = "shared"
+  cpus = 1
+  memory_mb = 256
