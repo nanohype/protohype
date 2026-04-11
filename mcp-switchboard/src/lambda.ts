@@ -67,6 +67,9 @@ function createResponseCapture(): { res: ServerResponse; getCapture: () => Promi
     },
   });
 
+  // Save the original .end() before Object.assign overwrites it
+  const originalEnd = writable.end.bind(writable);
+
   // Minimal shim — only the subset the MCP transport uses
   const res = Object.assign(writable, {
     statusCode: 200,
@@ -89,7 +92,7 @@ function createResponseCapture(): { res: ServerResponse; getCapture: () => Promi
       if (chunk) {
         chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(String(chunk)));
       }
-      writable.end();
+      originalEnd();
       return res;
     },
   }) as unknown as ServerResponse;
