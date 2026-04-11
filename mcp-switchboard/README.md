@@ -45,25 +45,24 @@ aws secretsmanager put-secret-value --secret-id mcp-switchboard/hubspot --secret
 # See CLAUDE.md for all services
 ```
 
-### 5. Retrieve your API key
+### 5. Retrieve the bearer token
 
-CDK auto-generates a key on first deploy. Retrieve it with:
+CDK auto-generates a token on first deploy. Retrieve it and add it to your Anthropic vault:
 
 ```bash
-aws secretsmanager get-secret-value --secret-id mcp-switchboard/api-key --query SecretString --output text
+aws secretsmanager get-secret-value --secret-id mcp-switchboard/bearer-token --query SecretString --output text
 ```
 
 ### 6. Connect from your agent
 
-All requests require an `x-api-key` header:
+All requests require an `Authorization: Bearer <token>` header. The Anthropic vault sends this automatically when the token is stored as an MCP credential. No headers needed in the agent config — just the URL:
 
 ```json
 {
   "mcpServers": {
     "hubspot": {
       "type": "url",
-      "url": "https://YOUR_API_ID.execute-api.us-east-1.amazonaws.com/hubspot",
-      "headers": { "x-api-key": "YOUR_API_KEY" }
+      "url": "https://YOUR_API_ID.execute-api.us-east-1.amazonaws.com/hubspot"
     }
   }
 }
@@ -96,7 +95,7 @@ npm test               # 42 unit tests, fully mocked
 ## Infrastructure
 
 - **API Gateway** HTTP API — one route per service, all authenticated
-- **Lambda Authorizer** — validates `x-api-key` header against Secrets Manager
+- **Lambda Authorizer** — validates `Authorization: Bearer` header against Secrets Manager
 - **Lambda** — Node.js 22, ARM64, 512 MB, 30s timeout, esbuild-bundled
 - **Secrets Manager** — one secret per service + auto-generated API key, RETAIN on destroy
 - **IAM** — Lambda reads `mcp-switchboard/*` secrets only

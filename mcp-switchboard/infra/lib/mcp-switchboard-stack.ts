@@ -80,11 +80,13 @@ export class McpSwitchboardStack extends cdk.Stack {
       });
     }
 
-    // ─── API Key — auto-generated, stored in Secrets Manager ────────────────
+    // ─── Bearer Token — auto-generated, stored in Secrets Manager ────────────
+    // The token value goes into the Anthropic vault as an MCP credential.
+    // The vault sends Authorization: Bearer <token> automatically on every request.
 
-    const apiKeySecret = new secretsmanager.Secret(this, 'ApiKeySecret', {
-      secretName: `${secretPrefix}/api-key`,
-      description: 'API key for authenticating requests to MCP Switchboard',
+    const bearerTokenSecret = new secretsmanager.Secret(this, 'BearerTokenSecret', {
+      secretName: `${secretPrefix}/bearer-token`,
+      description: 'Bearer token for authenticating requests to MCP Switchboard (store in Anthropic vault)',
       generateSecretString: {
         excludePunctuation: true,
         passwordLength: 48,
@@ -92,7 +94,7 @@ export class McpSwitchboardStack extends cdk.Stack {
       removalPolicy: cdk.RemovalPolicy.RETAIN,
     });
 
-    // ─── Lambda Authorizer — validates x-api-key header ─────────────────────
+    // ─── Lambda Authorizer — validates Authorization: Bearer header ──────────
 
     const authorizerFn = new nodejs.NodejsFunction(this, 'AuthorizerLambda', {
       functionName: 'mcp-switchboard-authorizer',
@@ -110,7 +112,7 @@ export class McpSwitchboardStack extends cdk.Stack {
         format: nodejs.OutputFormat.CJS,
       },
       environment: {
-        API_KEY_SECRET_ID: `${secretPrefix}/api-key`,
+        BEARER_TOKEN_SECRET_ID: `${secretPrefix}/bearer-token`,
       },
     });
 
@@ -118,14 +120,14 @@ export class McpSwitchboardStack extends cdk.Stack {
       new iam.PolicyStatement({
         effect: iam.Effect.ALLOW,
         actions: ['secretsmanager:GetSecretValue'],
-        resources: [`arn:aws:secretsmanager:${this.region}:${this.account}:secret:${secretPrefix}/api-key-*`],
+        resources: [`arn:aws:secretsmanager:${this.region}:${this.account}:secret:${secretPrefix}/bearer-token-*`],
       })
     );
 
-    const httpAuthorizer = new authorizers.HttpLambdaAuthorizer('ApiKeyAuthorizer', authorizerFn, {
-      authorizerName: 'mcp-switchboard-api-key',
+    const httpAuthorizer = new authorizers.HttpLambdaAuthorizer('BearerTokenAuthorizer', authorizerFn, {
+      authorizerName: 'mcp-switchboard-bearer',
       responseTypes: [authorizers.HttpLambdaResponseType.SIMPLE],
-      identitySource: ['$request.header.x-api-key'],
+      identitySource: ['$request.header.Authorization'],
       resultsCacheTtl: cdk.Duration.minutes(5),
     });
 
@@ -178,7 +180,7 @@ export class McpSwitchboardStack extends cdk.Stack {
       apiName: 'mcp-switchboard',
       description: 'MCP Switchboard — remote MCP servers for HubSpot, Google Drive, Calendar, Analytics, CSE, Stripe',
       corsPreflight: {
-        allowHeaders: ['content-type', 'mcp-session-id', 'x-api-key'],
+        allowHeaders: ['content-type', 'mcp-session-id', 'authorization'],
         allowMethods: [apigateway.CorsHttpMethod.POST, apigateway.CorsHttpMethod.GET, apigateway.CorsHttpMethod.OPTIONS],
         allowOrigins: ['*'],
       },
@@ -220,9 +222,9 @@ export class McpSwitchboardStack extends cdk.Stack {
       description: 'Lambda function name',
     });
 
-    new cdk.CfnOutput(this, 'GetApiKeyCommand', {
-      value: `aws secretsmanager get-secret-value --secret-id ${secretPrefix}/api-key --query SecretString --output text`,
-      description: 'Run this command to retrieve your API key',
+    new cdk.CfnOutput(this, 'GetBearerTokenCommand', {
+      value: `aws secretsmanager get-secret-value --secret-id ${secretPrefix}/bearer-token --query SecretString --output text`,
+      description: 'Run this command to retrieve the bearer token (add to Anthropic vault)',
     });
 
     // ─── Tags ─────────────────────────────────────────────────────────────────
