@@ -1,0 +1,10 @@
+{
+  "name": "agent-memory",
+  "private": true,
+  "scripts": {
+    "deploy": "cd infra && npm install && npx cdk deploy --require-approval never",
+    "destroy": "cd infra && npx cdk destroy",
+    "diff": "cd infra && npx cdk diff",
+    "synth": "cd infra && npx cdk synth"
+  }
+}
