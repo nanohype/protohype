@@ -4,24 +4,26 @@ Real-time cost dashboard for AI agent fleets. Tracks token usage, spend, and bud
 
 ## What This Is
 
-A protohype project in the nanohype ecosystem. Built from Next.js app router + Recharts + a lightweight data layer reading `.perf.json`.
+A protohype project in the nanohype ecosystem. Built from Next.js app router + Recharts + a lightweight data layer backed by S3 (production) or local file (development).
 
 **Not a template** — this is a standalone, runnable application.
 
 ## Architecture
 
 ```
-.perf.json ──→ src/reader.ts ──→ src/aggregator.ts ──→ app/api/* ──→ React UI
-                (parse + validate)   (compute)        (REST)      (auto-refresh)
+S3 / .perf.json ──→ src/storage.ts ──→ src/reader.ts ──→ src/aggregator.ts ──→ app/api/* ──→ React UI
+                     (S3 or file)     (parse + validate)   (compute)           (REST)      (auto-refresh)
 ```
 
+- **src/storage.ts** — Storage abstraction: S3 when `PERF_BUCKET` is set, local file otherwise
 - **src/schema.ts** — Zod schemas for session records and aggregated types
 - **src/pricing.ts** — Model pricing constants + cost computation
-- **src/reader.ts** — Reads and enriches `.perf.json`
+- **src/reader.ts** — Reads and enriches perf data via storage layer
 - **src/aggregator.ts** — Pure aggregation functions (summary, agent costs, workflow costs, timeline buckets)
 - **src/perf-logger.ts** — Drop-in logger for the coordinator to call after each agent invocation
 - **app/api/** — Next.js route handlers: `/api/summary`, `/api/sessions`, `/api/trends`, `/api/budget`, `/api/seed`
 - **components/** — React UI components (Header, SummaryBar, BudgetBanner, charts, SessionTable)
+- **infra/** — CDK stack: App Runner + S3
 
 ## Commands
 
@@ -30,7 +32,7 @@ npm run dev          # Start development server (localhost:3000)
 npm run build        # Build for production
 npm start            # Run production build
 npm test             # Run tests (vitest)
-npm run seed         # Generate sample .perf.json data
+npm run seed         # Generate sample perf data
 ```
 
 ## Configuration
@@ -38,20 +40,25 @@ npm run seed         # Generate sample .perf.json data
 All config via environment variables. See `.env.example`.
 
 Key ones:
-- `PERF_FILE` — path to the perf JSON file (default: `./.perf.json`)
+- `PERF_BUCKET` — S3 bucket name (production). When unset, falls back to local file.
+- `PERF_KEY` — S3 object key (default: `perf.json`)
+- `PERF_FILE` — local file path for dev (default: `./.perf.json`)
 - `DAILY_BUDGET_USD` — daily budget alert threshold (default: `10`)
 - `PER_SESSION_BUDGET_USD` — per-session budget (default: `1`)
 
-## Deployment (Fly.io)
+## Deployment (AWS CDK)
 
 ```bash
-fly apps create cost-dash
-fly volumes create cost_data --size 1 --region iad
-fly secrets set DAILY_BUDGET_USD=10 PERF_FILE=/data/.perf.json
-fly deploy
+cd infra
+npm install
+npx cdk bootstrap    # first time only
+npx cdk deploy
 ```
 
-The `.perf.json` lives on the Fly volume at `/data/`. The coordinator must write to the same path (or sync via rsync/scp if running locally).
+This creates:
+- **App Runner service** — runs the Next.js container, auto-scales, HTTPS
+- **S3 bucket** — stores perf.json, encrypted, private
+- **IAM roles** — App Runner instance gets read/write to the bucket
 
 ## Integrating with the Coordinator
 
@@ -72,7 +79,7 @@ await logSession({
 });
 ```
 
-## Data Schema (.perf.json)
+## Data Schema (perf.json)
 
 ```json
 {

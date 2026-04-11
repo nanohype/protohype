@@ -1,12 +1,10 @@
 #!/usr/bin/env node
 /**
- * Generates realistic sample .perf.json data for demo/development.
+ * Generates realistic sample perf data for demo/development.
  * Usage: npm run seed
  */
 
-import fs from "node:fs/promises";
-import path from "node:path";
-import { fileURLToPath } from "node:url";
+import { writePerfData } from "./storage";
 
 const AGENT_ROLES = [
   "product", "design", "engineering", "qa",
@@ -92,10 +90,8 @@ async function seed() {
   // Sort chronologically
   sessions.sort((a, b) => a.startedAt.localeCompare(b.startedAt));
 
-  const filePath = process.env.PERF_FILE ?? path.join(process.cwd(), ".perf.json");
-  await fs.writeFile(filePath, JSON.stringify({ sessions }, null, 2), "utf8");
-
-  console.log(`✓ Seeded ${sessions.length} sessions → ${filePath}`);
+  await writePerfData(JSON.stringify({ sessions }, null, 2));
+  console.log(`Seeded ${sessions.length} sessions`);
 }
 
 seed().catch((err) => {

@@ -110,12 +110,12 @@ Written by the coordinator on every agent invocation. Schema:
 ---
 
 ## Success Criteria
-1. Dashboard loads in < 2s on Fly.io free tier
+1. Dashboard loads in < 2s on App Runner
 2. Auto-refreshes every 30 seconds without page reload
 3. Shows correct cost within +/-1% of Anthropic billing page
 4. Budget alert fires within one refresh cycle of threshold breach
 5. Works with zero sessions (empty state shows $0.00 and instructions)
-6. Single `fly deploy` ships it
+6. Single `cdk deploy` ships it
 
 ---
 
@@ -123,7 +123,7 @@ Written by the coordinator on every agent invocation. Schema:
 
 - **Backend:** Node.js/TypeScript service — reads `.perf.json`, calls Anthropic Usage API, aggregates, exposes REST endpoints
 - **Frontend:** Next.js single-page app with Recharts for charts
-- **Deployment:** Fly.io — single machine, no DB needed (file-based)
+- **Deployment:** AWS App Runner + S3 via CDK
 - **Refresh:** Client polls `/api/summary`, `/api/sessions`, `/api/trends` every 30s
 
 ---

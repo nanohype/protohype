@@ -1,43 +1,29 @@
 /**
- * Reads and parses the .perf.json data source.
- * Tolerates missing file (returns empty sessions).
+ * Reads and parses the perf data source.
+ * Tolerates missing data (returns empty sessions).
  * Validates with Zod — skips malformed records with a warning.
  */
 
-import fs from "node:fs/promises";
-import path from "node:path";
 import { PerfFileSchema, type Session } from "./schema";
-import { computeCost, modelLabel, type ModelPricing } from "./pricing";
+import { computeCost, modelLabel } from "./pricing";
 import type { EnrichedSession } from "./schema";
-
-export function getPerfFilePath(): string {
-  return process.env.PERF_FILE ?? path.join(process.cwd(), ".perf.json");
-}
+import { readPerfData } from "./storage";
 
 export async function readSessions(): Promise<Session[]> {
-  const filePath = getPerfFilePath();
-
-  let raw: string;
-  try {
-    raw = await fs.readFile(filePath, "utf8");
-  } catch (err: unknown) {
-    if ((err as NodeJS.ErrnoException).code === "ENOENT") {
-      return []; // no file yet — empty state
-    }
-    throw err;
-  }
+  const raw = await readPerfData();
+  if (!raw) return [];
 
   let parsed: unknown;
   try {
     parsed = JSON.parse(raw);
   } catch {
-    console.warn("[reader] .perf.json is not valid JSON — treating as empty");
+    console.warn("[reader] perf data is not valid JSON — treating as empty");
     return [];
   }
 
   const result = PerfFileSchema.safeParse(parsed);
   if (!result.success) {
-    console.warn("[reader] .perf.json schema issues:", result.error.flatten());
+    console.warn("[reader] perf data schema issues:", result.error.flatten());
     // Attempt partial parse — take what we can
     const rawSessions = (parsed as { sessions?: unknown[] })?.sessions ?? [];
     const valid: Session[] = [];

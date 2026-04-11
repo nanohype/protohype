@@ -2,7 +2,7 @@
  * Perf Logger
  *
  * Drop this into your coordinator. Call logSession() after each agent
- * invocation to append a session record to .perf.json.
+ * invocation to append a session record to the perf store.
  *
  * Usage in coordinator:
  *   import { logSession } from "./perf-logger.js";
@@ -18,8 +18,7 @@
  *   });
  */
 
-import fs from "node:fs/promises";
-import path from "node:path";
+import { readPerfData, writePerfData } from "./storage";
 
 export interface SessionLogEntry {
   sessionId: string;
@@ -47,16 +46,16 @@ export async function logSession(entry: SessionLogEntry): Promise<void> {
   await prev;
 
   try {
-    const filePath = process.env.PERF_FILE ?? path.join(process.cwd(), ".perf.json");
-
     // Read existing
     let data: { sessions: unknown[] } = { sessions: [] };
-    try {
-      const raw = await fs.readFile(filePath, "utf8");
-      data = JSON.parse(raw) as { sessions: unknown[] };
-      if (!Array.isArray(data.sessions)) data.sessions = [];
-    } catch {
-      // File doesn't exist yet — start fresh
+    const raw = await readPerfData();
+    if (raw) {
+      try {
+        data = JSON.parse(raw) as { sessions: unknown[] };
+        if (!Array.isArray(data.sessions)) data.sessions = [];
+      } catch {
+        // Corrupt data — start fresh
+      }
     }
 
     const record = {
@@ -74,11 +73,7 @@ export async function logSession(entry: SessionLogEntry): Promise<void> {
     };
 
     data.sessions.push(record);
-
-    // Write back (atomic-ish: write to tmp, rename)
-    const tmp = filePath + ".tmp";
-    await fs.writeFile(tmp, JSON.stringify(data, null, 2), "utf8");
-    await fs.rename(tmp, filePath);
+    await writePerfData(JSON.stringify(data, null, 2));
   } finally {
     resolve!();
   }

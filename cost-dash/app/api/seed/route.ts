@@ -1,6 +1,5 @@
 import { NextResponse } from "next/server";
-import fs from "node:fs/promises";
-import path from "node:path";
+import { writePerfData } from "@/src/storage";
 
 export const dynamic = "force-dynamic";
 
@@ -53,8 +52,7 @@ export async function POST() {
 
   sessions.sort((a, b) => a.startedAt.localeCompare(b.startedAt));
 
-  const filePath = process.env.PERF_FILE ?? path.join(process.cwd(), ".perf.json");
-  await fs.writeFile(filePath, JSON.stringify({ sessions }, null, 2), "utf8");
+  await writePerfData(JSON.stringify({ sessions }, null, 2));
 
-  return NextResponse.json({ seeded: sessions.length, path: filePath });
+  return NextResponse.json({ seeded: sessions.length });
 }

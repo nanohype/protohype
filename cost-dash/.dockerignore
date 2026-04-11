@@ -1,0 +1,9 @@
+node_modules
+.next
+.git
+infra
+docs
+*.md
+.env*
+.perf.json
+*.perf.json
