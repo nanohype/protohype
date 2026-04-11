@@ -32,14 +32,24 @@ function eventToIncomingMessage(event: APIGatewayProxyEventV2): IncomingMessage 
       : event.body
     : '';
 
+  const headers = Object.fromEntries(
+    Object.entries(event.headers ?? {}).map(([k, v]) => [k.toLowerCase(), v])
+  );
+
+  // Build rawHeaders array (alternating key/value pairs) — required by @hono/node-server
+  const rawHeaders: string[] = [];
+  for (const [k, v] of Object.entries(event.headers ?? {})) {
+    rawHeaders.push(k, v ?? '');
+  }
+
   const readable = Readable.from([body]);
   const req = Object.assign(readable, {
     method: event.requestContext.http.method,
     url: event.rawPath + (event.rawQueryString ? `?${event.rawQueryString}` : ''),
-    headers: Object.fromEntries(
-      Object.entries(event.headers ?? {}).map(([k, v]) => [k.toLowerCase(), v])
-    ),
-    socket: { remoteAddress: event.requestContext.http.sourceIp },
+    headers,
+    rawHeaders,
+    httpVersion: '2.0',
+    socket: { remoteAddress: event.requestContext.http.sourceIp, encrypted: true },
   }) as unknown as IncomingMessage;
 
   return req;
