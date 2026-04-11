@@ -7,20 +7,19 @@
  *   cd infra && npx cdk deploy --context secretPrefix=my-prefix --context lambdaMemoryMb=1024
  */
 
-import 'source-map-support/register';
 import * as cdk from 'aws-cdk-lib';
-import { McpProxyStack } from '../lib/mcp-proxy-stack.js';
+import { McpSwitchboardStack } from '../lib/mcp-switchboard-stack.js';
 
 const app = new cdk.App();
 
-new McpProxyStack(app, 'McpProxyStack', {
+new McpSwitchboardStack(app, 'McpSwitchboardStack', {
   env: {
     account: process.env.CDK_DEFAULT_ACCOUNT,
     region: process.env.CDK_DEFAULT_REGION ?? 'us-east-1',
   },
-  secretPrefix: app.node.tryGetContext('secretPrefix') ?? 'mcp-proxy',
+  secretPrefix: app.node.tryGetContext('secretPrefix') ?? 'mcp-switchboard',
   lambdaMemoryMb: parseInt(app.node.tryGetContext('lambdaMemoryMb') ?? '512', 10),
   lambdaTimeoutSec: parseInt(app.node.tryGetContext('lambdaTimeoutSec') ?? '30', 10),
-  stackName: 'McpProxyStack',
-  description: 'Self-hosted MCP proxy — 6 services behind one API Gateway + Lambda',
+  stackName: 'McpSwitchboardStack',
+  description: 'Self-hosted MCP gateway — 6 services behind one API Gateway + Lambda',
 });

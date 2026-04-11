@@ -9,7 +9,7 @@ import Stripe from 'stripe';
 import { z } from 'zod';
 
 export function createStripeServer(creds: { secretKey: string }): McpServer {
-  const stripe = new Stripe(creds.secretKey, { apiVersion: '2025-03-31.basil' });
+  const stripe = new Stripe(creds.secretKey);
   const server = new McpServer({ name: 'mcp-stripe', version: '0.1.0' });
 
   server.tool(

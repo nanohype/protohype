@@ -1,6 +1,6 @@
-# mcp-proxy
+# mcp-switchboard
 
-> Self-hosted MCP proxy. Six services — HubSpot, Google Drive, Google Calendar, Google Analytics, Google Custom Search, Stripe — exposed as remote MCP servers behind a single AWS API Gateway + Lambda endpoint.
+> Self-hosted MCP gateway. Six services — HubSpot, Google Drive, Google Calendar, Google Analytics, Google Custom Search, Stripe — exposed as remote MCP servers behind a single AWS API Gateway + Lambda endpoint.
 
 ## How It Works
 
@@ -42,7 +42,7 @@ CDK outputs the API endpoint URL after deploy.
 
 ```bash
 aws secretsmanager put-secret-value \
-  --secret-id mcp-proxy/hubspot \
+  --secret-id mcp-switchboard/hubspot \
   --secret-string '{"apiKey":"pat-na1-..."}'
 
 # See CLAUDE.md for all services
@@ -61,7 +61,7 @@ aws secretsmanager put-secret-value \
 }
 ```
 
-## Tools (35 total)
+## Tools (36 total)
 
 | Service | Tools |
 |---------|-------|
@@ -70,7 +70,7 @@ aws secretsmanager put-secret-value \
 | Google Calendar | 6 (list calendars, events CRUD) |
 | Google Analytics | 3 (report, realtime, list properties) |
 | Google CSE | 2 (web search, image search) |
-| Stripe | 9 (balance, customers, payments, subscriptions, invoices) |
+| Stripe | 10 (balance, customers CRUD, payments, subscriptions, invoices) |
 
 ## Local Development
 
@@ -90,7 +90,7 @@ npm test               # 42 unit tests, fully mocked
 - **API Gateway** HTTP API — one route per service
 - **Lambda** — Node.js 22, ARM64, 512 MB, 30s timeout, esbuild-bundled
 - **Secrets Manager** — one secret per service, RETAIN on destroy
-- **IAM** — Lambda reads `mcp-proxy/*` secrets only
+- **IAM** — Lambda reads `mcp-switchboard/*` secrets only
 - **CloudWatch Logs** — 30-day retention
 
 ## Cost (estimated, minimal traffic)

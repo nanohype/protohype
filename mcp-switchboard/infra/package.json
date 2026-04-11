@@ -1,7 +1,7 @@
 {
-  "name": "mcp-proxy-infra",
+  "name": "mcp-switchboard-infra",
   "version": "0.1.0",
-  "description": "CDK infrastructure for mcp-proxy",
+  "description": "CDK infrastructure for mcp-switchboard",
   "type": "module",
   "scripts": {
     "build": "tsc",

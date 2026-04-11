@@ -7,7 +7,7 @@ Prototyped ideas built from [nanohype](https://github.com/nanohype/nanohype) tem
 | Project | What It Does | Templates Used |
 |---------|-------------|----------------|
 | [sigint](sigint/) | Competitive intelligence radar — crawls AI SaaS competitors, semantic diffs, LLM analysis, Slack alerts | worker-service, data-pipeline, rag-pipeline, module-vector-store, module-notifications, slack-bot |
-| [mcp-proxy](mcp-proxy/) | Self-hosted MCP proxy — HubSpot, Google Drive, Calendar, Analytics, CSE, Stripe as remote MCP servers behind one AWS API Gateway + Lambda | mcp-server-ts, infra-aws, module-auth |
+| [mcp-switchboard](mcp-switchboard/) | Self-hosted MCP gateway — HubSpot, Google Drive, Calendar, Analytics, CSE, Stripe as remote MCP servers behind one AWS API Gateway + Lambda | mcp-server-ts, infra-aws, module-auth |
 
 ## What Is This
 

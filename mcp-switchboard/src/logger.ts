@@ -1,6 +1,5 @@
 /**
  * Structured JSON logger — stderr only, stdout reserved for MCP protocol.
- * Follows sigint/nanohype conventions.
  */
 
 type LogLevel = 'debug' | 'info' | 'warn' | 'error';

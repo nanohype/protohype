@@ -1,10 +1,10 @@
-# mcp-proxy
+# mcp-switchboard
 
-Self-hosted MCP proxy — HubSpot, Google Drive, Calendar, Analytics, CSE, and Stripe as remote MCP servers behind one AWS API Gateway + Lambda endpoint.
+Self-hosted MCP gateway — HubSpot, Google Drive, Calendar, Analytics, CSE, and Stripe as remote MCP servers behind one AWS API Gateway + Lambda endpoint.
 
 ## What This Is
 
-A protohype project in the nanohype ecosystem. Composes the `mcp-server-ts` template pattern with `infra-aws` to deploy 6 MCP servers as remote HTTP endpoints. One Lambda, one API Gateway, six routes.
+Composes the `mcp-server-ts` template pattern with `infra-aws` to deploy 6 MCP servers as remote HTTP endpoints. One Lambda, one API Gateway, six routes.
 
 ## Architecture
 
@@ -15,7 +15,7 @@ Agent (Claude) ──POST /hubspot──► API Gateway HTTP API
                                    ┌───┴──────────────────────────────┐
                                parseServiceKey('/hubspot')             │
                                resolveServer('hubspot')                │
-                               ← getSecret('mcp-proxy/hubspot')        │
+                               ← getSecret('mcp-switchboard/hubspot')  │
                                ← new Client({ accessToken: apiKey })   │
                                → McpServer (StreamableHTTPTransport)   │
                                → handleRequest → JSON-RPC response     │
@@ -23,19 +23,19 @@ Agent (Claude) ──POST /hubspot──► API Gateway HTTP API
 ```
 
 **Transport:** MCP Streamable HTTP (stateless — `sessionIdGenerator: undefined`)  
-**Auth:** AWS Secrets Manager — one secret per service under `mcp-proxy/*` prefix  
-**Infra:** CDK — `McpProxyStack` in `infra/`
+**Auth:** AWS Secrets Manager — one secret per service under `mcp-switchboard/*` prefix  
+**Infra:** CDK — `McpSwitchboardStack` in `infra/`
 
 ## Routes
 
 | Path | Service | Secret Key |
 |------|---------|-----------|
-| POST /hubspot | HubSpot CRM | `mcp-proxy/hubspot` → `{ apiKey }` |
-| POST /gdrive | Google Drive | `mcp-proxy/gdrive` → `{ serviceAccountKey }` |
-| POST /gcal | Google Calendar | `mcp-proxy/gcal` → `{ serviceAccountKey, impersonateEmail }` |
-| POST /analytics | Google Analytics 4 | `mcp-proxy/analytics` → `{ serviceAccountKey, propertyId }` |
-| POST /gcse | Google Custom Search | `mcp-proxy/gcse` → `{ apiKey, engineId }` |
-| POST /stripe | Stripe | `mcp-proxy/stripe` → `{ secretKey }` |
+| POST /hubspot | HubSpot CRM | `mcp-switchboard/hubspot` → `{ apiKey }` |
+| POST /gdrive | Google Drive | `mcp-switchboard/gdrive` → `{ serviceAccountKey }` |
+| POST /gcal | Google Calendar | `mcp-switchboard/gcal` → `{ serviceAccountKey, impersonateEmail }` |
+| POST /analytics | Google Analytics 4 | `mcp-switchboard/analytics` → `{ serviceAccountKey, propertyId }` |
+| POST /gcse | Google Custom Search | `mcp-switchboard/gcse` → `{ apiKey, engineId }` |
+| POST /stripe | Stripe | `mcp-switchboard/stripe` → `{ secretKey }` |
 
 ## Commands
 
@@ -77,10 +77,10 @@ src/
     gcal.ts          # 6 Google Calendar tools
     analytics.ts     # 3 Google Analytics 4 tools
     gcse.ts          # 2 Google Custom Search tools
-    stripe.ts        # 9 Stripe tools
+    stripe.ts        # 10 Stripe tools
 infra/
   bin/app.ts         # CDK app entry
-  lib/mcp-proxy-stack.ts  # CDK stack (API GW, Lambda, Secrets, IAM, CloudWatch)
+  lib/mcp-switchboard-stack.ts  # CDK stack (API GW, Lambda, Secrets, IAM, CloudWatch)
 tests/
   auth.test.ts       # Auth layer unit tests (AWS SDK mocked)
   router.test.ts     # Route parser tests
@@ -116,7 +116,7 @@ tests/
 ### Google Custom Search (2 tools)
 `gcse_search`, `gcse_search_images`
 
-### Stripe (9 tools)
+### Stripe (10 tools)
 `stripe_get_balance`, `stripe_list_customers`, `stripe_get_customer`, `stripe_create_customer`, `stripe_list_payments`, `stripe_get_payment`, `stripe_list_subscriptions`, `stripe_get_subscription`, `stripe_list_invoices`, `stripe_get_invoice`
 
 ## Populating Secrets
@@ -126,32 +126,32 @@ After `cdk deploy`, populate each secret via CLI or Console:
 ```bash
 # HubSpot
 aws secretsmanager put-secret-value \
-  --secret-id mcp-proxy/hubspot \
+  --secret-id mcp-switchboard/hubspot \
   --secret-string '{"apiKey":"pat-na1-..."}'
 
 # Stripe
 aws secretsmanager put-secret-value \
-  --secret-id mcp-proxy/stripe \
+  --secret-id mcp-switchboard/stripe \
   --secret-string '{"secretKey":"sk_live_..."}'
 
 # Google Drive (service account key as escaped JSON string)
 aws secretsmanager put-secret-value \
-  --secret-id mcp-proxy/gdrive \
+  --secret-id mcp-switchboard/gdrive \
   --secret-string "{\"serviceAccountKey\": $(cat service-account.json | jq -Rs .)}"
 
 # Google Calendar (requires domain-wide delegation)
 aws secretsmanager put-secret-value \
-  --secret-id mcp-proxy/gcal \
+  --secret-id mcp-switchboard/gcal \
   --secret-string "{\"serviceAccountKey\": $(cat service-account.json | jq -Rs .), \"impersonateEmail\": \"you@yourdomain.com\"}"
 
 # Google Analytics
 aws secretsmanager put-secret-value \
-  --secret-id mcp-proxy/analytics \
+  --secret-id mcp-switchboard/analytics \
   --secret-string "{\"serviceAccountKey\": $(cat service-account.json | jq -Rs .), \"propertyId\": \"123456789\"}"
 
 # Google Custom Search
 aws secretsmanager put-secret-value \
-  --secret-id mcp-proxy/gcse \
+  --secret-id mcp-switchboard/gcse \
   --secret-string '{"apiKey":"AIzaSy...","engineId":"abc123..."}'
 ```
 
@@ -188,7 +188,7 @@ aws secretsmanager put-secret-value \
 - `stripe` — Stripe API
 - `@aws-sdk/client-secrets-manager` — AWS Secrets Manager
 - `express` — Local dev server only
-- `serverless-http` — Lambda/Express bridge (local dev convenience)
+- `dotenv` — Environment variable loading for local dev
 - `zod` — Tool input validation
 - `aws-cdk-lib` — Infrastructure as code (infra/ only)
 

@@ -49,11 +49,11 @@ export function clearSecretCache(): void {
 
 // ─── Service-specific credential loaders ───────────────────────────────────
 
-const PREFIX = process.env.SECRET_PREFIX ?? 'mcp-proxy';
+const PREFIX = process.env.SECRET_PREFIX ?? 'mcp-switchboard';
 
 export async function hubspotCredentials(): Promise<{ apiKey: string }> {
   const s = await getSecret(`${PREFIX}/hubspot`);
-  if (!s.apiKey) throw new Error('mcp-proxy/hubspot secret missing apiKey');
+  if (!s.apiKey) throw new Error('mcp-switchboard/hubspot secret missing apiKey');
   return { apiKey: s.apiKey };
 }
 
@@ -64,12 +64,12 @@ export interface GoogleSACredentials {
 
 async function googleCredentials(service: string): Promise<GoogleSACredentials> {
   const s = await getSecret(`${PREFIX}/${service}`);
-  if (!s.serviceAccountKey) throw new Error(`mcp-proxy/${service} secret missing serviceAccountKey`);
+  if (!s.serviceAccountKey) throw new Error(`mcp-switchboard/${service} secret missing serviceAccountKey`);
   let key: Record<string, unknown>;
   try {
     key = JSON.parse(s.serviceAccountKey);
   } catch {
-    throw new Error(`mcp-proxy/${service} serviceAccountKey is not valid JSON`);
+    throw new Error(`mcp-switchboard/${service} serviceAccountKey is not valid JSON`);
   }
   return { serviceAccountKey: key, impersonateEmail: s.impersonateEmail };
 }
@@ -88,26 +88,26 @@ export interface AnalyticsCredentials extends GoogleSACredentials {
 
 export async function analyticsCredentials(): Promise<AnalyticsCredentials> {
   const s = await getSecret(`${PREFIX}/analytics`);
-  if (!s.serviceAccountKey) throw new Error('mcp-proxy/analytics secret missing serviceAccountKey');
-  if (!s.propertyId) throw new Error('mcp-proxy/analytics secret missing propertyId');
+  if (!s.serviceAccountKey) throw new Error('mcp-switchboard/analytics secret missing serviceAccountKey');
+  if (!s.propertyId) throw new Error('mcp-switchboard/analytics secret missing propertyId');
   let key: Record<string, unknown>;
   try {
     key = JSON.parse(s.serviceAccountKey);
   } catch {
-    throw new Error('mcp-proxy/analytics serviceAccountKey is not valid JSON');
+    throw new Error('mcp-switchboard/analytics serviceAccountKey is not valid JSON');
   }
   return { serviceAccountKey: key, propertyId: s.propertyId };
 }
 
 export async function gcseCredentials(): Promise<{ apiKey: string; engineId: string }> {
   const s = await getSecret(`${PREFIX}/gcse`);
-  if (!s.apiKey) throw new Error('mcp-proxy/gcse secret missing apiKey');
-  if (!s.engineId) throw new Error('mcp-proxy/gcse secret missing engineId');
+  if (!s.apiKey) throw new Error('mcp-switchboard/gcse secret missing apiKey');
+  if (!s.engineId) throw new Error('mcp-switchboard/gcse secret missing engineId');
   return { apiKey: s.apiKey, engineId: s.engineId };
 }
 
 export async function stripeCredentials(): Promise<{ secretKey: string }> {
   const s = await getSecret(`${PREFIX}/stripe`);
-  if (!s.secretKey) throw new Error('mcp-proxy/stripe secret missing secretKey');
+  if (!s.secretKey) throw new Error('mcp-switchboard/stripe secret missing secretKey');
   return { secretKey: s.secretKey };
 }

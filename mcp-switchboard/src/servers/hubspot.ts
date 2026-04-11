@@ -220,17 +220,17 @@ export function createHubSpotServer(credentials: { apiKey: string }): McpServer 
       dealId: z.string().optional().describe('Associate note with this deal ID'),
     },
     async ({ body, contactId, dealId }) => {
-      const associations = [];
+      const associations: Array<{ to: { id: string }; types: Array<{ associationCategory: 'HUBSPOT_DEFINED'; associationTypeId: number }>; }> = [];
       if (contactId) {
         associations.push({
           to: { id: contactId },
-          types: [{ associationCategory: 'HUBSPOT_DEFINED' as const, associationTypeId: 202 }],
+          types: [{ associationCategory: 'HUBSPOT_DEFINED', associationTypeId: 202 }],
         });
       }
       if (dealId) {
         associations.push({
           to: { id: dealId },
-          types: [{ associationCategory: 'HUBSPOT_DEFINED' as const, associationTypeId: 214 }],
+          types: [{ associationCategory: 'HUBSPOT_DEFINED', associationTypeId: 214 }],
         });
       }
       const result = await client.crm.objects.notes.basicApi.create({
@@ -238,7 +238,7 @@ export function createHubSpotServer(credentials: { apiKey: string }): McpServer 
           hs_note_body: body,
           hs_timestamp: new Date().toISOString(),
         },
-        associations,
+        associations: associations as never,
       });
       return { content: [{ type: 'text', text: JSON.stringify(result, null, 2) }] };
     }

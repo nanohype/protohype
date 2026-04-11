@@ -1,15 +1,15 @@
 /**
- * CDK Stack: MCP Proxy
+ * CDK Stack: MCP Switchboard
  *
  * Resources:
  *   - API Gateway HTTP API with routes for each service
  *   - Lambda function (NodejsFunction with esbuild bundling)
  *   - Secrets Manager secrets (one per service, pre-created with placeholder values)
- *   - IAM: Lambda can read Secrets Manager secrets under the mcp-proxy/* prefix
+ *   - IAM: Lambda can read Secrets Manager secrets under the mcp-switchboard/* prefix
  *   - CloudWatch Log Group with 30-day retention
  *
  * After deploy, populate each secret in the AWS Console or via CLI:
- *   aws secretsmanager put-secret-value --secret-id mcp-proxy/hubspot --secret-string '{"apiKey":"..."}'
+ *   aws secretsmanager put-secret-value --secret-id mcp-switchboard/hubspot --secret-string '{"apiKey":"..."}'
  */
 
 import * as cdk from 'aws-cdk-lib';
@@ -43,8 +43,8 @@ const PLACEHOLDER_SECRETS: Record<Service, Record<string, string>> = {
 
 // ─── Stack ────────────────────────────────────────────────────────────────────
 
-export interface McpProxyStackProps extends cdk.StackProps {
-  /** Secret prefix in Secrets Manager. Default: "mcp-proxy" */
+export interface McpSwitchboardStackProps extends cdk.StackProps {
+  /** Secret prefix in Secrets Manager. Default: "mcp-switchboard" */
   secretPrefix?: string;
   /** Memory allocated to Lambda. Default: 512 */
   lambdaMemoryMb?: number;
@@ -52,13 +52,13 @@ export interface McpProxyStackProps extends cdk.StackProps {
   lambdaTimeoutSec?: number;
 }
 
-export class McpProxyStack extends cdk.Stack {
+export class McpSwitchboardStack extends cdk.Stack {
   public readonly apiUrl: string;
 
-  constructor(scope: Construct, id: string, props: McpProxyStackProps = {}) {
+  constructor(scope: Construct, id: string, props: McpSwitchboardStackProps = {}) {
     super(scope, id, props);
 
-    const secretPrefix = props.secretPrefix ?? 'mcp-proxy';
+    const secretPrefix = props.secretPrefix ?? 'mcp-switchboard';
     const lambdaMemoryMb = props.lambdaMemoryMb ?? 512;
     const lambdaTimeoutSec = props.lambdaTimeoutSec ?? 30;
 
@@ -69,7 +69,7 @@ export class McpProxyStack extends cdk.Stack {
     for (const service of SERVICES) {
       secrets[service] = new secretsmanager.Secret(this, `Secret${capitalize(service)}`, {
         secretName: `${secretPrefix}/${service}`,
-        description: `MCP Proxy credentials for ${service}`,
+        description: `MCP Switchboard credentials for ${service}`,
         secretObjectValue: Object.fromEntries(
           Object.entries(PLACEHOLDER_SECRETS[service]).map(([k, v]) => [k, cdk.SecretValue.unsafePlainText(v)])
         ),
@@ -80,13 +80,13 @@ export class McpProxyStack extends cdk.Stack {
     // ─── Lambda — NodejsFunction with esbuild bundling ──────────────────────
 
     const logGroup = new logs.LogGroup(this, 'LambdaLogs', {
-      logGroupName: `/aws/lambda/mcp-proxy`,
+      logGroupName: `/aws/lambda/mcp-switchboard`,
       retention: logs.RetentionDays.ONE_MONTH,
       removalPolicy: cdk.RemovalPolicy.DESTROY,
     });
 
-    const fn = new nodejs.NodejsFunction(this, 'McpProxyLambda', {
-      functionName: 'mcp-proxy',
+    const fn = new nodejs.NodejsFunction(this, 'McpSwitchboardLambda', {
+      functionName: 'mcp-switchboard',
       // Entry point is relative to the CDK project root (infra/)
       // We point to the compiled source two directories up
       entry: path.resolve(__dirname, '../../src/lambda.ts'),
@@ -111,11 +111,10 @@ export class McpProxyStack extends cdk.Stack {
       environment: {
         SECRET_PREFIX: secretPrefix,
         LOG_LEVEL: 'info',
-        NODE_OPTIONS: '--enable-source-maps',
       },
     });
 
-    // ─── IAM — grant Lambda read access to all mcp-proxy/* secrets ──────────
+    // ─── IAM — grant Lambda read access to all mcp-switchboard/* secrets ──────────
 
     fn.addToRolePolicy(
       new iam.PolicyStatement({
@@ -127,9 +126,9 @@ export class McpProxyStack extends cdk.Stack {
 
     // ─── API Gateway HTTP API ────────────────────────────────────────────────
 
-    const httpApi = new apigateway.HttpApi(this, 'McpProxyApi', {
-      apiName: 'mcp-proxy',
-      description: 'MCP Proxy — remote MCP servers for HubSpot, Google Drive, Calendar, Analytics, CSE, Stripe',
+    const httpApi = new apigateway.HttpApi(this, 'McpSwitchboardApi', {
+      apiName: 'mcp-switchboard',
+      description: 'MCP Switchboard — remote MCP servers for HubSpot, Google Drive, Calendar, Analytics, CSE, Stripe',
       corsPreflight: {
         allowHeaders: ['content-type', 'mcp-session-id'],
         allowMethods: [apigateway.CorsHttpMethod.POST, apigateway.CorsHttpMethod.GET, apigateway.CorsHttpMethod.OPTIONS],
@@ -137,7 +136,7 @@ export class McpProxyStack extends cdk.Stack {
       },
     });
 
-    const lambdaIntegration = new integrations.HttpLambdaIntegration('McpProxyIntegration', fn, {
+    const lambdaIntegration = new integrations.HttpLambdaIntegration('McpSwitchboardIntegration', fn, {
       payloadFormatVersion: apigateway.PayloadFormatVersion.VERSION_2_0,
     });
 
@@ -156,8 +155,8 @@ export class McpProxyStack extends cdk.Stack {
 
     new cdk.CfnOutput(this, 'ApiEndpoint', {
       value: httpApi.apiEndpoint,
-      description: 'MCP Proxy API endpoint',
-      exportName: 'McpProxyApiEndpoint',
+      description: 'MCP Switchboard API endpoint',
+      exportName: 'McpSwitchboardApiEndpoint',
     });
 
     for (const service of SERVICES) {
@@ -174,7 +173,7 @@ export class McpProxyStack extends cdk.Stack {
 
     // ─── Tags ─────────────────────────────────────────────────────────────────
 
-    cdk.Tags.of(this).add('project', 'mcp-proxy');
+    cdk.Tags.of(this).add('project', 'mcp-switchboard');
     cdk.Tags.of(this).add('managed-by', 'cdk');
   }
 }

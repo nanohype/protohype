@@ -75,7 +75,7 @@ export function createAnalyticsServer(creds: AnalyticsCredentials): McpServer {
           dateRanges,
           dimensions: dimensions?.map(name => ({ name })),
           metrics: metrics.map(name => ({ name })),
-          limit,
+          limit: String(limit),
           orderBys: orderBys?.map(o => ({
             metric: o.metric,
             dimension: o.dimension,
@@ -109,7 +109,7 @@ export function createAnalyticsServer(creds: AnalyticsCredentials): McpServer {
         requestBody: {
           dimensions: dimensions.map(name => ({ name })),
           metrics: metrics.map(name => ({ name })),
-          limit,
+          limit: String(limit),
         },
       });
       return { content: [{ type: 'text', text: JSON.stringify(res.data, null, 2) }] };

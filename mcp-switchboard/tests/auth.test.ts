@@ -8,7 +8,9 @@ import { clearSecretCache } from '../src/auth.js';
 
 // ─── Mock AWS SDK ─────────────────────────────────────────────────────────────
 
-const mockSend = vi.fn();
+const { mockSend } = vi.hoisted(() => ({
+  mockSend: vi.fn(),
+}));
 
 vi.mock('@aws-sdk/client-secrets-manager', () => ({
   SecretsManagerClient: vi.fn().mockImplementation(() => ({ send: mockSend })),
@@ -38,28 +40,28 @@ describe('auth', () => {
     it('fetches and parses a secret', async () => {
       mockSecret({ apiKey: 'test-key' });
       const { getSecret } = await import('../src/auth.js');
-      const result = await getSecret('mcp-proxy/hubspot');
+      const result = await getSecret('mcp-switchboard/hubspot');
       expect(result).toEqual({ apiKey: 'test-key' });
     });
 
     it('caches the secret on second call', async () => {
       mockSecret({ apiKey: 'test-key' });
       const { getSecret } = await import('../src/auth.js');
-      await getSecret('mcp-proxy/hubspot');
-      await getSecret('mcp-proxy/hubspot');
+      await getSecret('mcp-switchboard/hubspot');
+      await getSecret('mcp-switchboard/hubspot');
       expect(mockSend).toHaveBeenCalledTimes(1);
     });
 
     it('throws when SecretString is missing', async () => {
       mockSend.mockResolvedValueOnce({ SecretString: undefined });
       const { getSecret } = await import('../src/auth.js');
-      await expect(getSecret('mcp-proxy/missing')).rejects.toThrow("has no string value");
+      await expect(getSecret('mcp-switchboard/missing')).rejects.toThrow("has no string value");
     });
 
     it('throws when SecretString is not valid JSON', async () => {
       mockSend.mockResolvedValueOnce({ SecretString: 'not-json' });
       const { getSecret } = await import('../src/auth.js');
-      await expect(getSecret('mcp-proxy/bad')).rejects.toThrow("not valid JSON");
+      await expect(getSecret('mcp-switchboard/bad')).rejects.toThrow("not valid JSON");
     });
   });
 

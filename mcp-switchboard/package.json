@@ -1,13 +1,13 @@
 {
-  "name": "mcp-proxy",
+  "name": "mcp-switchboard",
   "version": "0.1.0",
-  "description": "Self-hosted MCP proxy — HubSpot, Google Drive, Calendar, Analytics, CSE, and Stripe as remote MCP servers behind AWS API Gateway + Lambda",
+  "description": "Self-hosted MCP gateway — HubSpot, Google Drive, Calendar, Analytics, CSE, and Stripe as remote MCP servers behind AWS API Gateway + Lambda",
   "type": "module",
   "engines": {
     "node": ">=22"
   },
   "scripts": {
-    "build": "tsc -p tsconfig.build.json",
+    "build": "tsc --noEmit",
     "dev": "tsx watch src/local.ts",
     "test": "vitest run",
     "test:watch": "vitest",
@@ -22,7 +22,7 @@
     "@modelcontextprotocol/sdk": "^1.10.0",
     "express": "^5.0.0",
     "googleapis": "^144.0.0",
-    "serverless-http": "^3.2.0",
+    "dotenv": "^16.4.0",
     "stripe": "^17.0.0",
     "zod": "^3.24.0",
     "@aws-sdk/client-secrets-manager": "^3.700.0"
