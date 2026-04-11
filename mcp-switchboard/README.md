@@ -41,21 +41,29 @@ CDK outputs the API endpoint URL after deploy.
 ### 4. Populate secrets
 
 ```bash
-aws secretsmanager put-secret-value \
-  --secret-id mcp-switchboard/hubspot \
-  --secret-string '{"apiKey":"pat-na1-..."}'
-
+aws secretsmanager put-secret-value --secret-id mcp-switchboard/hubspot --secret-string '{"apiKey":"pat-na1-..."}'
 # See CLAUDE.md for all services
 ```
 
-### 5. Connect from your agent
+### 5. Retrieve your API key
+
+CDK auto-generates a key on first deploy. Retrieve it with:
+
+```bash
+aws secretsmanager get-secret-value --secret-id mcp-switchboard/api-key --query SecretString --output text
+```
+
+### 6. Connect from your agent
+
+All requests require an `x-api-key` header:
 
 ```json
 {
   "mcpServers": {
     "hubspot": {
-      "type": "http",
-      "url": "https://YOUR_API_ID.execute-api.us-east-1.amazonaws.com/hubspot"
+      "type": "url",
+      "url": "https://YOUR_API_ID.execute-api.us-east-1.amazonaws.com/hubspot",
+      "headers": { "x-api-key": "YOUR_API_KEY" }
     }
   }
 }
@@ -87,9 +95,10 @@ npm test               # 42 unit tests, fully mocked
 
 ## Infrastructure
 
-- **API Gateway** HTTP API — one route per service
+- **API Gateway** HTTP API — one route per service, all authenticated
+- **Lambda Authorizer** — validates `x-api-key` header against Secrets Manager
 - **Lambda** — Node.js 22, ARM64, 512 MB, 30s timeout, esbuild-bundled
-- **Secrets Manager** — one secret per service, RETAIN on destroy
+- **Secrets Manager** — one secret per service + auto-generated API key, RETAIN on destroy
 - **IAM** — Lambda reads `mcp-switchboard/*` secrets only
 - **CloudWatch Logs** — 30-day retention
 

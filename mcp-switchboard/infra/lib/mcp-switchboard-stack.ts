@@ -3,17 +3,20 @@
  *
  * Resources:
  *   - API Gateway HTTP API with routes for each service
+ *   - Lambda authorizer (validates x-api-key header against Secrets Manager)
  *   - Lambda function (NodejsFunction with esbuild bundling)
- *   - Secrets Manager secrets (one per service, pre-created with placeholder values)
+ *   - Secrets Manager secrets (one per service + auto-generated API key)
  *   - IAM: Lambda can read Secrets Manager secrets under the mcp-switchboard/* prefix
  *   - CloudWatch Log Group with 30-day retention
  *
- * After deploy, populate each secret in the AWS Console or via CLI:
- *   aws secretsmanager put-secret-value --secret-id mcp-switchboard/hubspot --secret-string '{"apiKey":"..."}'
+ * After deploy, populate each service secret via CLI or Console.
+ * The API key is auto-generated — retrieve it with:
+ *   aws secretsmanager get-secret-value --secret-id mcp-switchboard/api-key --query SecretString --output text
  */
 
 import * as cdk from 'aws-cdk-lib';
 import * as apigateway from 'aws-cdk-lib/aws-apigatewayv2';
+import * as authorizers from 'aws-cdk-lib/aws-apigatewayv2-authorizers';
 import * as integrations from 'aws-cdk-lib/aws-apigatewayv2-integrations';
 import * as lambda from 'aws-cdk-lib/aws-lambda';
 import * as nodejs from 'aws-cdk-lib/aws-lambda-nodejs';
@@ -77,6 +80,55 @@ export class McpSwitchboardStack extends cdk.Stack {
       });
     }
 
+    // ─── API Key — auto-generated, stored in Secrets Manager ────────────────
+
+    const apiKeySecret = new secretsmanager.Secret(this, 'ApiKeySecret', {
+      secretName: `${secretPrefix}/api-key`,
+      description: 'API key for authenticating requests to MCP Switchboard',
+      generateSecretString: {
+        excludePunctuation: true,
+        passwordLength: 48,
+      },
+      removalPolicy: cdk.RemovalPolicy.RETAIN,
+    });
+
+    // ─── Lambda Authorizer — validates x-api-key header ─────────────────────
+
+    const authorizerFn = new nodejs.NodejsFunction(this, 'AuthorizerLambda', {
+      functionName: 'mcp-switchboard-authorizer',
+      entry: path.resolve(__dirname, '../../src/authorizer.ts'),
+      handler: 'handler',
+      runtime: lambda.Runtime.NODEJS_22_X,
+      architecture: lambda.Architecture.ARM_64,
+      memorySize: 128,
+      timeout: cdk.Duration.seconds(5),
+      bundling: {
+        externalModules: ['@aws-sdk/*'],
+        minify: true,
+        sourceMap: false,
+        target: 'node22',
+        format: nodejs.OutputFormat.CJS,
+      },
+      environment: {
+        API_KEY_SECRET_ID: `${secretPrefix}/api-key`,
+      },
+    });
+
+    authorizerFn.addToRolePolicy(
+      new iam.PolicyStatement({
+        effect: iam.Effect.ALLOW,
+        actions: ['secretsmanager:GetSecretValue'],
+        resources: [`arn:aws:secretsmanager:${this.region}:${this.account}:secret:${secretPrefix}/api-key-*`],
+      })
+    );
+
+    const httpAuthorizer = new authorizers.HttpLambdaAuthorizer('ApiKeyAuthorizer', authorizerFn, {
+      authorizerName: 'mcp-switchboard-api-key',
+      responseTypes: [authorizers.HttpLambdaResponseType.SIMPLE],
+      identitySource: ['$request.header.x-api-key'],
+      resultsCacheTtl: cdk.Duration.minutes(5),
+    });
+
     // ─── Lambda — NodejsFunction with esbuild bundling ──────────────────────
 
     const logGroup = new logs.LogGroup(this, 'LambdaLogs', {
@@ -87,8 +139,6 @@ export class McpSwitchboardStack extends cdk.Stack {
 
     const fn = new nodejs.NodejsFunction(this, 'McpSwitchboardLambda', {
       functionName: 'mcp-switchboard',
-      // Entry point is relative to the CDK project root (infra/)
-      // We point to the compiled source two directories up
       entry: path.resolve(__dirname, '../../src/lambda.ts'),
       handler: 'handler',
       runtime: lambda.Runtime.NODEJS_22_X,
@@ -97,13 +147,11 @@ export class McpSwitchboardStack extends cdk.Stack {
       timeout: cdk.Duration.seconds(lambdaTimeoutSec),
       logGroup,
       bundling: {
-        // esbuild bundles everything except @aws-sdk/* (available in Lambda runtime)
         externalModules: ['@aws-sdk/*'],
         minify: true,
         sourceMap: false,
         target: 'node22',
         format: nodejs.OutputFormat.CJS,
-        // Ensure googleapis grpc is handled correctly
         esbuildArgs: {
           '--conditions': 'require,node',
         },
@@ -114,7 +162,7 @@ export class McpSwitchboardStack extends cdk.Stack {
       },
     });
 
-    // ─── IAM — grant Lambda read access to all mcp-switchboard/* secrets ──────────
+    // ─── IAM — grant Lambda read access to all mcp-switchboard/* secrets ────
 
     fn.addToRolePolicy(
       new iam.PolicyStatement({
@@ -130,9 +178,9 @@ export class McpSwitchboardStack extends cdk.Stack {
       apiName: 'mcp-switchboard',
       description: 'MCP Switchboard — remote MCP servers for HubSpot, Google Drive, Calendar, Analytics, CSE, Stripe',
       corsPreflight: {
-        allowHeaders: ['content-type', 'mcp-session-id'],
+        allowHeaders: ['content-type', 'mcp-session-id', 'x-api-key'],
         allowMethods: [apigateway.CorsHttpMethod.POST, apigateway.CorsHttpMethod.GET, apigateway.CorsHttpMethod.OPTIONS],
-        allowOrigins: ['*'], // restrict to specific origins in production
+        allowOrigins: ['*'],
       },
     });
 
@@ -140,12 +188,13 @@ export class McpSwitchboardStack extends cdk.Stack {
       payloadFormatVersion: apigateway.PayloadFormatVersion.VERSION_2_0,
     });
 
-    // Add a route for each service (POST /{service})
+    // Add a route for each service (POST /{service}) — all routes require API key
     for (const service of SERVICES) {
       httpApi.addRoutes({
         path: `/${service}`,
         methods: [apigateway.HttpMethod.POST],
         integration: lambdaIntegration,
+        authorizer: httpAuthorizer,
       });
     }
 
@@ -169,6 +218,11 @@ export class McpSwitchboardStack extends cdk.Stack {
     new cdk.CfnOutput(this, 'LambdaFunctionName', {
       value: fn.functionName,
       description: 'Lambda function name',
+    });
+
+    new cdk.CfnOutput(this, 'GetApiKeyCommand', {
+      value: `aws secretsmanager get-secret-value --secret-id ${secretPrefix}/api-key --query SecretString --output text`,
+      description: 'Run this command to retrieve your API key',
     });
 
     // ─── Tags ─────────────────────────────────────────────────────────────────

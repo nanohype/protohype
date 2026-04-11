@@ -10,8 +10,11 @@ Composes the `mcp-server-ts` template pattern with `infra-aws` to deploy 6 MCP s
 
 ```
 Agent (Claude) ──POST /hubspot──► API Gateway HTTP API
-                                       │
-                                    Lambda
+                  x-api-key header       │
+                                    Authorizer Lambda
+                                    (validates x-api-key)
+                                         │
+                                    MCP Lambda
                                    ┌───┴──────────────────────────────┐
                                parseServiceKey('/hubspot')             │
                                resolveServer('hubspot')                │
@@ -23,7 +26,7 @@ Agent (Claude) ──POST /hubspot──► API Gateway HTTP API
 ```
 
 **Transport:** MCP Streamable HTTP (stateless — `sessionIdGenerator: undefined`)  
-**Auth:** AWS Secrets Manager — one secret per service under `mcp-switchboard/*` prefix  
+**Auth:** Lambda authorizer validates `x-api-key` header against auto-generated key in Secrets Manager (`mcp-switchboard/api-key`). Service credentials stored per-service under `mcp-switchboard/*`.  
 **Infra:** CDK — `McpSwitchboardStack` in `infra/`
 
 ## Routes
