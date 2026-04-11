@@ -138,7 +138,37 @@ pytest tests/ -v
 
 ## Deployment
 
+### CDK (recommended)
+
+Provisions a full EC2 environment — VPC, security group, instance, IAM role — and installs the service automatically via user data.
+
+```bash
+cd infra && npm install
+npx cdk bootstrap   # first time only
+npx cdk deploy
+```
+
+Override defaults via context:
+
+```bash
+npx cdk deploy --context instanceType=t3.small
+npx cdk deploy --context sshKeyName=my-key --context sshAllowCidr=203.0.113.0/32
+```
+
+Connect via SSM Session Manager (no SSH key needed) or SSH tunnel:
+
+```bash
+# SSM
+aws ssm start-session --target <instance-id>
+
+# SSH tunnel (forwards port 8765 to your machine)
+ssh -i <key>.pem -L 8765:localhost:8765 ec2-user@<public-ip>
+curl http://localhost:8765/api/v1/health
+```
+
+### Manual
+
 See `deploy/` for:
-- `install.sh` -- idempotent installer for Ubuntu/Debian
-- `agent-memory.service` -- systemd unit file
-- `aws-setup.md` -- AWS deployment guide
+- `install.sh` — idempotent installer for Amazon Linux 2023 / Ubuntu
+- `agent-memory.service` — systemd unit file
+- `aws-setup.md` — AWS deployment guide
