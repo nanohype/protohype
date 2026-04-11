@@ -7,6 +7,7 @@ Prototyped ideas built from [nanohype](https://github.com/nanohype/nanohype) tem
 | Project | What It Does | Templates Used |
 |---------|-------------|----------------|
 | [sigint](sigint/) | Competitive intelligence radar — crawls AI SaaS competitors, semantic diffs, LLM analysis, Slack alerts | worker-service, data-pipeline, rag-pipeline, module-vector-store, module-notifications, slack-bot |
+| [agent-memory](agent-memory/) | Persistent memory service — semantic search, auto-summarization, SQLite + local embeddings behind a FastAPI REST API | standalone |
 
 ## What Is This
 

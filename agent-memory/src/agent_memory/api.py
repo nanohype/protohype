@@ -1,19 +1,36 @@
 """FastAPI router: all /api/v1/* endpoints."""
 import logging
 import re
+import time
 from datetime import datetime
 from typing import Annotated
 
-from fastapi import APIRouter, HTTPException, Query
+from fastapi import APIRouter, Depends, Header, HTTPException, Query
 from pydantic import BaseModel, Field, field_validator
 from ulid import ULID
 
-_TAG_RE = re.compile(r"^[a-zA-Z0-9_-]+$")
-
+from .config import settings
 from . import db, embeddings as emb, summarizer
 
+_TAG_RE = re.compile(r"^[a-zA-Z0-9_-]+$")
+
 logger = logging.getLogger(__name__)
-router = APIRouter(prefix="/api/v1")
+
+
+# ---------------------------------------------------------------------------
+# Auth dependency
+# ---------------------------------------------------------------------------
+
+async def verify_api_key(x_api_key: str | None = Header(None)) -> None:
+    """Optional API key auth. Skipped if AGENT_MEMORY_API_KEY is not set."""
+    if settings.api_key is None:
+        return
+    if x_api_key != settings.api_key:
+        raise HTTPException(status_code=401, detail="Invalid or missing API key")
+
+
+router = APIRouter(prefix="/api/v1", dependencies=[Depends(verify_api_key)])
+public_router = APIRouter(prefix="/api/v1")
 
 
 # ---------------------------------------------------------------------------
@@ -38,7 +55,7 @@ class WriteMemoryRequest(BaseModel):
     model_config = {"json_schema_extra": {
         "example": {
             "role": "eng-backend",
-            "content": "Chose SQLite WAL mode — no ops overhead for solopreneur.",
+            "content": "Chose SQLite WAL mode — no ops overhead.",
             "tags": ["decision", "database"],
         }
     }}
@@ -95,7 +112,6 @@ class HealthResponse(BaseModel):
 # ---------------------------------------------------------------------------
 # Startup timestamp for uptime tracking
 # ---------------------------------------------------------------------------
-import time
 _started_at = time.monotonic()
 
 
@@ -106,11 +122,6 @@ _started_at = time.monotonic()
 @router.post("/memories", response_model=MemoryResponse, status_code=201)
 async def write_memory(req: WriteMemoryRequest) -> MemoryResponse:
     """Write a new memory. Generates and stores an embedding."""
-    # Validate tags
-    for tag in req.tags:
-        if len(tag) > 64:
-            raise HTTPException(status_code=422, detail=f"Tag too long: {tag!r}")
-
     memory_id = str(ULID())
     memory = await db.insert_memory(
         id=memory_id,
@@ -120,16 +131,13 @@ async def write_memory(req: WriteMemoryRequest) -> MemoryResponse:
     )
 
     # Generate embedding (CPU, fast for MiniLM)
-    try:
-        vector = emb.embed(req.content)
-        await db.insert_embedding(
-            id=str(ULID()),
-            memory_id=memory_id,
-            vector=vector,
-            model=emb.settings.embedding_model,
-        )
-    except Exception as e:
-        logger.warning(f"Embedding failed for memory {memory_id}: {e}")
+    vector = emb.embed(req.content)
+    await db.insert_embedding(
+        id=str(ULID()),
+        memory_id=memory_id,
+        vector=vector,
+        model=emb.settings.embedding_model,
+    )
 
     # Async summarization check (fire and don't block)
     try:
@@ -208,7 +216,7 @@ async def trigger_summarize() -> SummarizeResponse:
     return SummarizeResponse(**result)
 
 
-@router.get("/health", response_model=HealthResponse)
+@public_router.get("/health", response_model=HealthResponse)
 async def health() -> HealthResponse:
     """Health check with service stats."""
     count = await db.get_memory_count()

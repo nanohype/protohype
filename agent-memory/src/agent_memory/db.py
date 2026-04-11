@@ -29,7 +29,7 @@ async def init_db() -> None:
     await _db.execute("PRAGMA journal_mode=WAL")
     await _db.execute("PRAGMA synchronous=NORMAL")
     await _db.execute("PRAGMA foreign_keys=ON")
-    await _db.execute("PRAGMA cache_size=-32000")  # 32MB cache
+    await _db.execute("PRAGMA cache_size=-32000")
 
     await _db.executescript("""
         CREATE TABLE IF NOT EXISTS memories (
@@ -84,13 +84,7 @@ def unpack_vector(b: bytes) -> list[float]:
     return list(struct.unpack(f"{n}f", b))
 
 
-async def insert_memory(
-    id: str,
-    role: str,
-    content: str,
-    tags: list[str],
-    is_summary: bool = False,
-) -> dict[str, Any]:
+async def insert_memory(id: str, role: str, content: str, tags: list[str], is_summary: bool = False) -> dict[str, Any]:
     db = await get_db()
     now = _now_iso()
     await db.execute(
@@ -99,23 +93,10 @@ async def insert_memory(
         (id, role, content, json.dumps(tags), 1 if is_summary else 0, now, now),
     )
     await db.commit()
-    return {
-        "id": id,
-        "role": role,
-        "content": content,
-        "tags": tags,
-        "is_summary": is_summary,
-        "created_at": now,
-        "updated_at": now,
-    }
+    return {"id": id, "role": role, "content": content, "tags": tags, "is_summary": is_summary, "created_at": now, "updated_at": now}
 
 
-async def insert_embedding(
-    id: str,
-    memory_id: str,
-    vector: list[float],
-    model: str,
-) -> None:
+async def insert_embedding(id: str, memory_id: str, vector: list[float], model: str) -> None:
     db = await get_db()
     now = _now_iso()
     await db.execute(
@@ -142,36 +123,24 @@ async def delete_memory(id: str) -> bool:
     return deleted
 
 
-async def list_memories(
-    limit: int = 20,
-    offset: int = 0,
-    role: str | None = None,
-    tag: str | None = None,
-    since: str | None = None,
-) -> tuple[list[dict[str, Any]], int]:
+async def list_memories(limit: int = 20, offset: int = 0, role: str | None = None, tag: str | None = None, since: str | None = None) -> tuple[list[dict[str, Any]], int]:
     db = await get_db()
     conditions = []
     params: list[Any] = []
+    from_clause = "FROM memories"
 
     if role:
         conditions.append("role = ?")
         params.append(role)
     if tag:
+        from_clause = "FROM memories, json_each(memories.tags)"
         conditions.append("json_each.value = ?")
+        params.append(tag)
     if since:
         conditions.append("created_at >= ?")
         params.append(since)
 
     where = ""
-    from_clause = "FROM memories"
-
-    if tag:
-        from_clause = "FROM memories, json_each(memories.tags)"
-        conditions.append("json_each.value = ?")
-        params_with_tag = list(params)
-        params_with_tag.insert(-1 if since else len(params), tag)
-        params = params_with_tag
-
     if conditions:
         where = "WHERE " + " AND ".join(conditions)
 
@@ -201,7 +170,6 @@ async def get_memory_count() -> int:
 
 
 async def get_all_embeddings() -> list[tuple[str, list[float]]]:
-    """Return all (memory_id, vector) pairs for similarity search."""
     db = await get_db()
     async with db.execute("SELECT memory_id, vector FROM embeddings") as cur:
         rows = await cur.fetchall()
@@ -213,22 +181,16 @@ async def get_memories_by_ids(ids: list[str]) -> list[dict[str, Any]]:
         return []
     db = await get_db()
     placeholders = ",".join("?" * len(ids))
-    async with db.execute(
-        f"SELECT * FROM memories WHERE id IN ({placeholders})", ids
-    ) as cur:
+    async with db.execute(f"SELECT * FROM memories WHERE id IN ({placeholders})", ids) as cur:
         rows = await cur.fetchall()
     by_id = {r["id"]: _row_to_dict(r) for r in rows}
     return [by_id[id] for id in ids if id in by_id]
 
 
-async def get_old_nonsummary_memories(
-    older_than_iso: str, limit: int = 50
-) -> list[dict[str, Any]]:
+async def get_old_nonsummary_memories(older_than_iso: str, limit: int = 50) -> list[dict[str, Any]]:
     db = await get_db()
     async with db.execute(
-        """SELECT * FROM memories
-           WHERE is_summary = 0 AND created_at < ?
-           ORDER BY created_at ASC LIMIT ?""",
+        """SELECT * FROM memories WHERE is_summary = 0 AND created_at < ? ORDER BY created_at ASC LIMIT ?""",
         (older_than_iso, limit),
     ) as cur:
         rows = await cur.fetchall()
@@ -240,9 +202,7 @@ async def delete_memories_by_ids(ids: list[str]) -> int:
         return 0
     db = await get_db()
     placeholders = ",".join("?" * len(ids))
-    async with db.execute(
-        f"DELETE FROM memories WHERE id IN ({placeholders})", ids
-    ) as cur:
+    async with db.execute(f"DELETE FROM memories WHERE id IN ({placeholders})", ids) as cur:
         count = cur.rowcount
     await db.commit()
     return count

@@ -1,4 +1,4 @@
-"""Seed the database from /workspace/.spastic/memory.md on startup."""
+"""Seed the database from a markdown file on startup."""
 import logging
 import os
 import re
@@ -12,10 +12,6 @@ logger = logging.getLogger(__name__)
 
 
 async def seed_from_markdown() -> int:
-    """
-    Read memory.md and ingest any content not already in the DB.
-    Returns number of memories seeded.
-    """
     path = settings.seed_md_path
     if not os.path.exists(path):
         logger.info(f"No seed file found at {path}, skipping")
@@ -27,11 +23,8 @@ async def seed_from_markdown() -> int:
     if not content:
         return 0
 
-    # Check if we've already seeded this file (use a meta key)
     db_conn = await db.get_db()
-    async with db_conn.execute(
-        "SELECT value FROM meta WHERE key = 'seeded_md_hash'"
-    ) as cur:
+    async with db_conn.execute("SELECT value FROM meta WHERE key = 'seeded_md_hash'") as cur:
         row = await cur.fetchone()
 
     import hashlib
@@ -41,33 +34,18 @@ async def seed_from_markdown() -> int:
         logger.info("memory.md already seeded (hash match), skipping")
         return 0
 
-    # Parse sections separated by ## headers, or split by double newlines
     sections = _parse_sections(content)
     count = 0
     for section_role, section_content in sections:
         if not section_content.strip():
             continue
         memory_id = str(ULID())
-        await db.insert_memory(
-            id=memory_id,
-            role=section_role,
-            content=section_content.strip(),
-            tags=["seeded", "memory-md"],
-        )
+        await db.insert_memory(id=memory_id, role=section_role, content=section_content.strip(), tags=["seeded", "memory-md"])
         vector = emb.embed(section_content)
-        await db.insert_embedding(
-            id=str(ULID()),
-            memory_id=memory_id,
-            vector=vector,
-            model=settings.embedding_model,
-        )
+        await db.insert_embedding(id=str(ULID()), memory_id=memory_id, vector=vector, model=settings.embedding_model)
         count += 1
 
-    # Store hash so we don't re-seed on next restart
-    await db_conn.execute(
-        "INSERT OR REPLACE INTO meta (key, value) VALUES ('seeded_md_hash', ?)",
-        (content_hash,),
-    )
+    await db_conn.execute("INSERT OR REPLACE INTO meta (key, value) VALUES ('seeded_md_hash', ?)", (content_hash,))
     await db_conn.commit()
 
     logger.info(f"Seeded {count} memories from {path}")
@@ -75,13 +53,11 @@ async def seed_from_markdown() -> int:
 
 
 def _parse_sections(content: str) -> list[tuple[str, str]]:
-    """Split markdown into (role, content) sections by ## headers."""
     header_pattern = re.compile(r"^##\s+(.+)$", re.MULTILINE)
     matches = list(header_pattern.finditer(content))
 
     if not matches:
-        # No headers: treat entire content as a single coordinator memory
-        return [("coordinator", content)]
+        return [(settings.seed_default_role, content)]
 
     sections = []
     for i, match in enumerate(matches):

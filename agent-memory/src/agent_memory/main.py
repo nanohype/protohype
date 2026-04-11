@@ -10,7 +10,7 @@ from contextlib import asynccontextmanager
 from .config import settings
 from . import db
 from .seeder import seed_from_markdown
-from .api import router
+from .api import router, public_router
 
 logging.basicConfig(
     level=logging.INFO,
@@ -21,20 +21,18 @@ logger = logging.getLogger(__name__)
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    logger.info(f"Starting spastic-memory on {settings.host}:{settings.port}")
+    logger.info(f"Starting agent-memory on {settings.host}:{settings.port}")
     logger.info(f"DB: {settings.db_path}")
     logger.info(f"Embedding model: {settings.embedding_model}")
 
     await db.init_db()
     logger.info("Database initialized")
 
-    # Warm up embedding model so first request isn't slow
     from . import embeddings as emb
     logger.info("Loading embedding model...")
     emb.get_model()
     logger.info("Embedding model loaded")
 
-    # Seed from memory.md if present
     seeded = await seed_from_markdown()
     if seeded:
         logger.info(f"Seeded {seeded} memories from memory.md")
@@ -47,18 +45,19 @@ async def lifespan(app: FastAPI):
 
 
 app = FastAPI(
-    title="Spastic Memory Service",
-    description="Persistent memory for the spastic agent team",
+    title="Agent Memory Service",
+    description="Persistent memory for multi-agent systems",
     version="1.0.0",
     lifespan=lifespan,
 )
 
 app.include_router(router)
+app.include_router(public_router)
 
 
 def run():
     uvicorn.run(
-        "spastic_memory.main:app",
+        "agent_memory.main:app",
         host=settings.host,
         port=settings.port,
         log_level="info",

@@ -3,9 +3,9 @@ requires = ["hatchling"]
 build-backend = "hatchling.build"
 
 [project]
-name = "spastic-memory"
+name = "agent-memory"
 version = "1.0.0"
-description = "Persistent memory service for the spastic agent team"
+description = "Persistent memory service for multi-agent systems"
 requires-python = ">=3.11"
 dependencies = [
     "fastapi>=0.111.0",
@@ -27,15 +27,15 @@ dev = [
 ]
 
 [project.scripts]
-spastic-memory = "spastic_memory.main:run"
+agent-memory = "agent_memory.main:run"
 
 [tool.hatch.build.targets.wheel]
-packages = ["src/spastic_memory"]
+packages = ["src/agent_memory"]
 
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
 testpaths = ["tests"]
 
 [tool.coverage.run]
-source = ["src/spastic_memory"]
+source = ["src/agent_memory"]
 omit = ["tests/*"]

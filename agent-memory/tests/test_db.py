@@ -6,12 +6,11 @@ import os
 
 @pytest_asyncio.fixture
 async def initialized_db(tmp_path):
-    """Provide an initialized DB connection for direct DB layer tests."""
-    from spastic_memory import db as db_mod
+    from agent_memory import db as db_mod
     import importlib
-    from spastic_memory import config
+    from agent_memory import config
 
-    os.environ["SPASTIC_MEMORY_DB_PATH"] = str(tmp_path / "test.db")
+    os.environ["AGENT_MEMORY_DB_PATH"] = str(tmp_path / "test.db")
     importlib.reload(config)
     importlib.reload(db_mod)
 
@@ -24,17 +23,11 @@ async def initialized_db(tmp_path):
 @pytest.mark.asyncio
 async def test_insert_and_retrieve_memory(initialized_db):
     db = initialized_db
-    memory = await db.insert_memory(
-        id="test_id_001",
-        role="product",
-        content="Test decision content",
-        tags=["test", "decision"],
-    )
+    memory = await db.insert_memory(id="test_id_001", role="product", content="Test decision content", tags=["test", "decision"])
     assert memory["id"] == "test_id_001"
     assert memory["role"] == "product"
     assert memory["tags"] == ["test", "decision"]
     assert memory["is_summary"] is False
-
     retrieved = await db.get_memory_by_id("test_id_001")
     assert retrieved is not None
     assert retrieved["content"] == "Test decision content"
@@ -51,8 +44,7 @@ async def test_delete_memory(initialized_db):
 
 @pytest.mark.asyncio
 async def test_delete_nonexistent_returns_false(initialized_db):
-    db = initialized_db
-    deleted = await db.delete_memory("nonexistent_xyz")
+    deleted = await initialized_db.delete_memory("nonexistent_xyz")
     assert deleted is False
 
 
@@ -70,37 +62,22 @@ async def test_list_memories_pagination(initialized_db):
     db = initialized_db
     for i in range(5):
         await db.insert_memory(id=f"pg_{i}", role="qa", content=f"memory {i}", tags=[])
-
     page1, total = await db.list_memories(limit=2, offset=0)
     assert len(page1) == 2
     assert total == 5
-
     page2, _ = await db.list_memories(limit=2, offset=2)
     assert len(page2) == 2
-    # No overlap
-    ids1 = {m["id"] for m in page1}
-    ids2 = {m["id"] for m in page2}
-    assert ids1.isdisjoint(ids2)
+    assert {m["id"] for m in page1}.isdisjoint({m["id"] for m in page2})
 
 
 @pytest.mark.asyncio
 async def test_embedding_cascade_delete(initialized_db):
-    """Deleting a memory should delete its embedding (ON DELETE CASCADE)."""
     db = initialized_db
     await db.insert_memory(id="emb_parent", role="eng-ai", content="with embedding", tags=[])
-    await db.insert_embedding(
-        id="emb_001",
-        memory_id="emb_parent",
-        vector=[0.1, 0.2, 0.3],
-        model="test-model",
-    )
-
-    embeddings_before = await db.get_all_embeddings()
-    assert any(mid == "emb_parent" for mid, _ in embeddings_before)
-
+    await db.insert_embedding(id="emb_001", memory_id="emb_parent", vector=[0.1, 0.2, 0.3], model="test-model")
+    assert any(mid == "emb_parent" for mid, _ in await db.get_all_embeddings())
     await db.delete_memory("emb_parent")
-    embeddings_after = await db.get_all_embeddings()
-    assert not any(mid == "emb_parent" for mid, _ in embeddings_after)
+    assert not any(mid == "emb_parent" for mid, _ in await db.get_all_embeddings())
 
 
 @pytest.mark.asyncio

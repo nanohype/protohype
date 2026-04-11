@@ -1,0 +1,38 @@
+[Unit]
+Description=Agent Memory Service
+After=network.target
+Documentation=https://github.com/your-org/agent-memory
+
+[Service]
+Type=simple
+User=agent-memory
+Group=agent-memory
+WorkingDirectory=/opt/agent-memory
+ExecStart=/opt/agent-memory/.venv/bin/agent-memory
+Restart=on-failure
+RestartSec=5
+StandardOutput=journal
+StandardError=journal
+
+# Environment
+Environment=AGENT_MEMORY_HOST=127.0.0.1
+Environment=AGENT_MEMORY_PORT=8765
+Environment=AGENT_MEMORY_DB_PATH=/var/lib/agent-memory/memory.db
+Environment=AGENT_MEMORY_SEED_MD_PATH=/var/lib/agent-memory/memory.md
+# Environment=AGENT_MEMORY_API_KEY=changeme
+# Environment=AGENT_MEMORY_EMBEDDING_MODEL=all-MiniLM-L6-v2
+# Environment=AGENT_MEMORY_SUMMARIZE_THRESHOLD=100
+# Environment=AGENT_MEMORY_SUMMARIZE_BATCH_SIZE=20
+# Environment=AGENT_MEMORY_SUMMARIZE_MIN_AGE_HOURS=24
+
+# Hardening
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/var/lib/agent-memory
+PrivateTmp=true
+ProtectKernelTunables=true
+ProtectControlGroups=true
+
+[Install]
+WantedBy=multi-user.target
