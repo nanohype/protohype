@@ -10,7 +10,7 @@ import type {
   AgentCost,
   WorkflowCost,
   DayBucket,
-} from "./schema.js";
+} from "./schema";
 
 const DEFAULT_DAILY_BUDGET = parseFloat(process.env.DAILY_BUDGET_USD ?? "10");
 const WARN_THRESHOLD = 0.8;
@@ -172,7 +172,8 @@ function filterByTime(
     return sessions.filter((s) => isAfter(new Date(s.startedAt), weekAgo));
   }
 
-  // "session" — last N sessions by time (use all today as approximation)
-  const today = startOfDay(new Date());
-  return sessions.filter((s) => isAfter(new Date(s.startedAt), today));
+  // "session" — most recent 20 sessions regardless of date
+  return [...sessions]
+    .sort((a, b) => b.startedAt.localeCompare(a.startedAt))
+    .slice(0, 20);
 }

@@ -65,6 +65,7 @@ export default function Dashboard() {
   }, [timeFilter, timelineDays, sessionPage, sessionSearch]);
 
   // Initial load
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   useEffect(() => { fetchAll(); }, []);
 
   // Auto-refresh
@@ -74,7 +75,9 @@ export default function Dashboard() {
   }, [fetchAll]);
 
   // Re-fetch when filters change
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   useEffect(() => { fetchAll(timeFilter, timelineDays, 1, sessionSearch); }, [timeFilter, timelineDays]);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   useEffect(() => { fetchAll(timeFilter, timelineDays, sessionPage, sessionSearch); }, [sessionPage]);
 
   const handleSearch = useCallback((q: string) => {

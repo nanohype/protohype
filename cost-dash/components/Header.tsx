@@ -31,9 +31,9 @@ export default function Header({ lastRefreshed, refreshing, error }: Props) {
     <header className="sticky top-0 z-50 border-b border-zinc-800 bg-zinc-950/95 backdrop-blur">
       <div className="max-w-[1600px] mx-auto px-4 h-12 flex items-center justify-between">
         <span className="text-zinc-50 font-bold tracking-tight">
-          spastic{" "}
-          <span className="text-zinc-500">//</span>{" "}
-          <span className="text-zinc-300">cost</span>
+          cost{" "}
+          <span className="text-zinc-500">{"// "}</span>
+          <span className="text-zinc-300">dash</span>
         </span>
 
         <div className="flex items-center gap-2 text-xs text-zinc-500">

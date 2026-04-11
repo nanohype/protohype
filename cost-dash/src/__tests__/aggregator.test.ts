@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeEach } from "vitest";
-import { computeSummary, computeAgentCosts, computeWorkflowCosts, computeDayBuckets } from "../aggregator.js";
-import type { EnrichedSession } from "../schema.js";
+import { computeSummary, computeAgentCosts, computeWorkflowCosts, computeDayBuckets } from "../aggregator";
+import type { EnrichedSession } from "../schema";
 
 function makeSession(overrides: Partial<EnrichedSession> = {}): EnrichedSession {
   const now = new Date().toISOString();

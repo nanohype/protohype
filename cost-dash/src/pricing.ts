@@ -11,12 +11,18 @@ export interface ModelPricing {
 }
 
 export const PRICING: Record<string, ModelPricing> = {
-  // Claude Sonnet 4.5 / claude-sonnet-4-5
+  // Claude Sonnet 4.6
+  "claude-sonnet-4-6": { inputPerM: 3.0, outputPerM: 15.0, cacheReadPerM: 0.30, cacheWritePerM: 3.75 },
+
+  // Claude Opus 4.6
+  "claude-opus-4-6": { inputPerM: 15.0, outputPerM: 75.0, cacheReadPerM: 1.50, cacheWritePerM: 18.75 },
+
+  // Claude Sonnet 4.5
   "claude-sonnet-4-5": { inputPerM: 3.0, outputPerM: 15.0, cacheReadPerM: 0.30, cacheWritePerM: 3.75 },
   "claude-3-5-sonnet-20241022": { inputPerM: 3.0, outputPerM: 15.0, cacheReadPerM: 0.30, cacheWritePerM: 3.75 },
   "claude-3-5-sonnet-20240620": { inputPerM: 3.0, outputPerM: 15.0, cacheReadPerM: 0.30, cacheWritePerM: 3.75 },
 
-  // Claude Opus 4.5 / claude-opus-4-5
+  // Claude Opus 4.5
   "claude-opus-4-5": { inputPerM: 15.0, outputPerM: 75.0, cacheReadPerM: 1.50, cacheWritePerM: 18.75 },
   "claude-3-opus-20240229": { inputPerM: 15.0, outputPerM: 75.0, cacheReadPerM: 1.50, cacheWritePerM: 18.75 },
 

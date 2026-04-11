@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { computeCost, getPricing, modelLabel } from "../pricing.js";
+import { computeCost, getPricing, modelLabel } from "../pricing";
 
 describe("getPricing", () => {
   it("returns sonnet pricing for exact model name", () => {

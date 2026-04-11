@@ -20,7 +20,7 @@ WORKDIR /app
 
 ENV NODE_ENV=production
 ENV PORT=3000
-ENV SPASTIC_PERF_FILE=/data/.spastic-perf.json
+ENV PERF_FILE=/data/.perf.json
 
 # Create non-root user
 RUN addgroup --system --gid 1001 nodejs
@@ -29,7 +29,6 @@ RUN adduser --system --uid 1001 nextjs
 # Copy standalone build
 COPY --from=builder /app/.next/standalone ./
 COPY --from=builder /app/.next/static ./.next/static
-COPY --from=builder /app/public ./public
 
 # Create data directory for volume mount
 RUN mkdir -p /data && chown nextjs:nodejs /data

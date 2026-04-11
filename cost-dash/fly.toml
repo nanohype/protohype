@@ -1,7 +1,7 @@
-# fly.toml — spastic-dash deployment
-# Deploy: fly deploy --app spastic-dash
+# fly.toml — cost-dash deployment
+# Deploy: fly deploy --app cost-dash
 
-app = "spastic-dash"
+app = "cost-dash"
 primary_region = "iad"
 
 [build]
@@ -10,11 +10,11 @@ primary_region = "iad"
 [env]
   NODE_ENV = "production"
   PORT = "3000"
-  # SPASTIC_PERF_FILE set to volume mount path
+  # PERF_FILE set to volume mount path
 
 [mounts]
-  # Persistent volume for .spastic-perf.json
-  source = "spastic_data"
+  # Persistent volume for .perf.json
+  source = "cost_data"
   destination = "/data"
 
 [[services]]

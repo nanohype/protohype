@@ -13,8 +13,8 @@ out/
 .env*.local
 
 # Perf data — may contain cost info, keep local
-.spastic-perf.json
-*.spastic-perf.json
+.perf.json
+*.perf.json
 
 # Fly.io
 .fly/
@@ -22,6 +22,9 @@ out/
 # OS
 .DS_Store
 Thumbs.db
+
+# Build artifacts
+tsconfig.tsbuildinfo
 
 # Logs
 *.log

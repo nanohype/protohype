@@ -1,17 +1,17 @@
 /**
- * Reads and parses the .spastic-perf.json data source.
+ * Reads and parses the .perf.json data source.
  * Tolerates missing file (returns empty sessions).
  * Validates with Zod — skips malformed records with a warning.
  */
 
 import fs from "node:fs/promises";
 import path from "node:path";
-import { PerfFileSchema, type Session } from "./schema.js";
-import { computeCost, modelLabel, type ModelPricing } from "./pricing.js";
-import type { EnrichedSession } from "./schema.js";
+import { PerfFileSchema, type Session } from "./schema";
+import { computeCost, modelLabel, type ModelPricing } from "./pricing";
+import type { EnrichedSession } from "./schema";
 
 export function getPerfFilePath(): string {
-  return process.env.SPASTIC_PERF_FILE ?? path.join(process.cwd(), ".spastic-perf.json");
+  return process.env.PERF_FILE ?? path.join(process.cwd(), ".perf.json");
 }
 
 export async function readSessions(): Promise<Session[]> {
@@ -31,13 +31,13 @@ export async function readSessions(): Promise<Session[]> {
   try {
     parsed = JSON.parse(raw);
   } catch {
-    console.warn("[reader] .spastic-perf.json is not valid JSON — treating as empty");
+    console.warn("[reader] .perf.json is not valid JSON — treating as empty");
     return [];
   }
 
   const result = PerfFileSchema.safeParse(parsed);
   if (!result.success) {
-    console.warn("[reader] .spastic-perf.json schema issues:", result.error.flatten());
+    console.warn("[reader] .perf.json schema issues:", result.error.flatten());
     // Attempt partial parse — take what we can
     const rawSessions = (parsed as { sessions?: unknown[] })?.sessions ?? [];
     const valid: Session[] = [];

@@ -1,6 +1,6 @@
 import { z } from "zod";
 
-/** One agent invocation / session record in .spastic-perf.json */
+/** One agent invocation / session record in .perf.json */
 export const SessionSchema = z.object({
   sessionId: z.string(),
   startedAt: z.string().datetime({ offset: true }),
@@ -17,7 +17,7 @@ export const SessionSchema = z.object({
 
 export type Session = z.infer<typeof SessionSchema>;
 
-/** The full .spastic-perf.json file shape */
+/** The full .perf.json file shape */
 export const PerfFileSchema = z.object({
   sessions: z.array(SessionSchema),
 });

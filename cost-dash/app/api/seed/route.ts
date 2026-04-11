@@ -53,7 +53,7 @@ export async function POST() {
 
   sessions.sort((a, b) => a.startedAt.localeCompare(b.startedAt));
 
-  const filePath = process.env.SPASTIC_PERF_FILE ?? path.join(process.cwd(), ".spastic-perf.json");
+  const filePath = process.env.PERF_FILE ?? path.join(process.cwd(), ".perf.json");
   await fs.writeFile(filePath, JSON.stringify({ sessions }, null, 2), "utf8");
 
   return NextResponse.json({ seeded: sessions.length, path: filePath });

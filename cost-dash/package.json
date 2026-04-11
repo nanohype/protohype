@@ -1,7 +1,7 @@
 {
-  "name": "spastic-dash",
+  "name": "cost-dash",
   "version": "0.1.0",
-  "description": "Real-time cost dashboard for the spastic 51-agent team",
+  "description": "Real-time cost dashboard for AI agent API spend",
   "private": true,
   "engines": {
     "node": ">=22"
@@ -16,16 +16,11 @@
     "seed": "tsx src/seed.ts"
   },
   "dependencies": {
-    "@anthropic-ai/sdk": "^0.39.0",
-    "@tanstack/react-table": "^8.20.0",
-    "clsx": "^2.1.0",
     "date-fns": "^4.1.0",
-    "dotenv": "^16.4.7",
     "next": "^15.1.0",
     "react": "^19.0.0",
     "react-dom": "^19.0.0",
     "recharts": "^2.14.1",
-    "tailwind-merge": "^2.6.0",
     "zod": "^3.24.0"
   },
   "devDependencies": {

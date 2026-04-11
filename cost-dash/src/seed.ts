@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 /**
- * Generates realistic sample .spastic-perf.json data for demo/development.
+ * Generates realistic sample .perf.json data for demo/development.
  * Usage: npm run seed
  */
 
@@ -92,7 +92,7 @@ async function seed() {
   // Sort chronologically
   sessions.sort((a, b) => a.startedAt.localeCompare(b.startedAt));
 
-  const filePath = process.env.SPASTIC_PERF_FILE ?? path.join(process.cwd(), ".spastic-perf.json");
+  const filePath = process.env.PERF_FILE ?? path.join(process.cwd(), ".perf.json");
   await fs.writeFile(filePath, JSON.stringify({ sessions }, null, 2), "utf8");
 
   console.log(`✓ Seeded ${sessions.length} sessions → ${filePath}`);
