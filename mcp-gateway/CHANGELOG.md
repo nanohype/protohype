@@ -7,6 +7,7 @@
 **MCP Switchboard**
 - Routes MCP protocol requests to HubSpot, Google Drive, Calendar, Analytics, Custom Search, Stripe
 - Per-service credential management via Secrets Manager
+- Google Drive / Calendar / Analytics use service account JSON credentials — the switchboard mints short-lived access tokens via RS256-signed JWTs against Google's token endpoint, cached per (service_account, scope)
 - `tools/list` and `tools/call` MCP protocol support
 - 5-minute credential cache in Lambda memory
 - Service allowlist validation

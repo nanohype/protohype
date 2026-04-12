@@ -105,44 +105,125 @@ curl -s \
 
 ## Configure Service Credentials
 
-Secrets are created by CDK — populate values with your real credentials.
+CDK creates one empty Secrets Manager secret per switchboard service at deploy time. You populate each one with real credentials — only for services you actually use. Unpopulated secrets don't break the stack; calls to those services just return an error at runtime.
+
+**Secret naming:** `/mcp-gateway/mcp-switchboard/{service}` where `{service}` is one of `hubspot`, `google-drive`, `google-calendar`, `google-analytics`, `google-custom-search`, `stripe`.
+
+**List which secrets exist and whether they're populated:**
 
 ```bash
-# Pattern
-aws secretsmanager put-secret-value \
-  --secret-id /mcp-gateway/mcp-switchboard/{service} \
-  --secret-string '{"apiKey":"your-key-here"}'
+aws secretsmanager list-secrets \
+  --filters Key=name,Values=/mcp-gateway/mcp-switchboard/ \
+  --query 'SecretList[].{Name:Name,LastChanged:LastChangedDate}' \
+  --output table
 ```
 
-**HubSpot**
+**Rotation:** Every service's `put-secret-value` command below creates a new version and marks it `AWSCURRENT`. The switchboard's 5-minute in-Lambda cache picks up the new value automatically; no redeploy needed. Old versions are retained (`RemovalPolicy.RETAIN` on the secret itself).
+
+---
+
+### HubSpot
+
+1. Create a [HubSpot Private App](https://developers.hubspot.com/docs/api/private-apps) in your account.
+2. Grant the scopes you need — `crm.objects.contacts.read`, `crm.objects.contacts.write`, `crm.objects.deals.read`, `crm.objects.deals.write` cover the switchboard tools.
+3. Copy the access token (format: `pat-na1-...`).
+
 ```bash
 aws secretsmanager put-secret-value \
   --secret-id /mcp-gateway/mcp-switchboard/hubspot \
-  --secret-string '{"accessToken":"pat-na1-xxxxxxxx"}'
+  --secret-string '{"accessToken":"pat-na1-xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx"}'
 ```
 
-**Google Drive / Calendar / Analytics** (OAuth2)
+Private app tokens don't expire unless you revoke them.
+
+---
+
+### Google Drive / Calendar / Analytics — service account (recommended)
+
+1. In [Google Cloud Console → IAM & Admin → Service Accounts](https://console.cloud.google.com/iam-admin/serviceaccounts), create a service account.
+2. Enable the APIs you need on the same project — Drive API, Calendar API, Google Analytics Data API.
+3. For Drive and Calendar: share the target Drive folders / calendars with the service account's email (`*@*.iam.gserviceaccount.com`) — service accounts don't inherit user access.
+4. For Analytics: add the service account's email as a viewer on the GA4 property.
+5. **Keys → Add Key → JSON** to download the service account key. You get a JSON file that looks like:
+
+```json
+{
+  "type": "service_account",
+  "project_id": "your-project",
+  "private_key_id": "...",
+  "private_key": "-----BEGIN PRIVATE KEY-----\n...\n-----END PRIVATE KEY-----\n",
+  "client_email": "svc@your-project.iam.gserviceaccount.com",
+  "token_uri": "https://oauth2.googleapis.com/token"
+}
+```
+
+6. Store the full JSON in each Google service's secret (same JSON for all three):
+
 ```bash
 aws secretsmanager put-secret-value \
   --secret-id /mcp-gateway/mcp-switchboard/google-drive \
-  --secret-string '{"accessToken":"ya29.xxx","refreshToken":"1//xxx","clientId":"xxx.apps.googleusercontent.com","clientSecret":"GOCSPX-xxx"}'
+  --secret-string file://service-account.json
+
+aws secretsmanager put-secret-value \
+  --secret-id /mcp-gateway/mcp-switchboard/google-calendar \
+  --secret-string file://service-account.json
+
+aws secretsmanager put-secret-value \
+  --secret-id /mcp-gateway/mcp-switchboard/google-analytics \
+  --secret-string file://service-account.json
 ```
 
-> ⚠️ **Google OAuth access tokens expire after 1 hour.** For production use, prefer a [Google service account key](https://cloud.google.com/iam/docs/service-account-creds). The switchboard uses `accessToken` as-is — calls will return 401 after expiry.
+Delete the local `service-account.json` after upload.
 
-**Google Custom Search**
+The switchboard mints a short-lived access token per API call using RS256-signed JWTs and caches the access token in Lambda memory until ~1 minute before it expires. No rotation needed unless the service account key is rotated in GCP.
+
+**Scopes** are fixed per service:
+- `google-drive` → `https://www.googleapis.com/auth/drive`
+- `google-calendar` → `https://www.googleapis.com/auth/calendar`
+- `google-analytics` → `https://www.googleapis.com/auth/analytics.readonly`
+
+---
+
+### Google Custom Search
+
+1. Create a [Programmable Search Engine](https://programmablesearchengine.google.com/) — note the **Search engine ID** (shown as `cx`).
+2. In [Google Cloud Console → APIs & Services](https://console.cloud.google.com/apis/credentials), create an API key and restrict it to the Custom Search API.
+
 ```bash
 aws secretsmanager put-secret-value \
   --secret-id /mcp-gateway/mcp-switchboard/google-custom-search \
-  --secret-string '{"apiKey":"AIzaXXX","cx":"017xxxxxxxxxxxxxxx"}'
+  --secret-string '{"apiKey":"AIzaXXX","cx":"017xxxxxxxxxxxxxxx:xxxxxxx"}'
 ```
 
-**Stripe**
+API keys don't expire unless you delete them.
+
+---
+
+### Stripe
+
+Grab a restricted API key from [Stripe Dashboard → Developers → API keys](https://dashboard.stripe.com/apikeys). For the switchboard's tools (list customers, get customer, list subscriptions, get invoice), a restricted key with only **Read** permission on Customers, Subscriptions, and Invoices is sufficient.
+
 ```bash
 aws secretsmanager put-secret-value \
   --secret-id /mcp-gateway/mcp-switchboard/stripe \
-  --secret-string '{"apiKey":"sk_live_xxx"}'
+  --secret-string '{"apiKey":"rk_live_xxxxxxxx"}'
 ```
+
+Use a `sk_test_*` key during development — point at Stripe's test mode.
+
+---
+
+### Gateway bearer token (special)
+
+Unlike service credentials, the gateway bearer token at `/mcp-gateway/gateway-bearer-token` is **auto-generated** by CDK at first deploy (64 chars, excluding punctuation). Read it with:
+
+```bash
+aws secretsmanager get-secret-value \
+  --secret-id /mcp-gateway/gateway-bearer-token \
+  --query SecretString --output text
+```
+
+To rotate: write a new value with `put-secret-value` (any opaque string). The API Gateway authorizer's 5-minute result cache means in-flight requests using the old token continue to work for up to 5 minutes — be aware if you're rotating in response to a leak. For immediate invalidation, also run `aws apigatewayv2 update-authorizer --authorizer-result-ttl-in-seconds 0` (restore after incident).
 
 ---
 

@@ -16,6 +16,7 @@
 
 import { SecretsManagerClient, GetSecretValueCommand } from '@aws-sdk/client-secrets-manager';
 import { APIGatewayProxyEventV2, APIGatewayProxyResultV2 } from 'aws-lambda';
+import { getGoogleAccessToken, isServiceAccount, GoogleServiceAccount } from './google-auth';
 
 const secretsClient = new SecretsManagerClient({ region: process.env.AWS_REGION ?? 'us-west-2' });
 
@@ -32,7 +33,44 @@ interface McpToolCallResponse {
 }
 
 type ServiceName = 'hubspot' | 'google-drive' | 'google-calendar' | 'google-analytics' | 'google-custom-search' | 'stripe';
-interface ServiceCredentials { apiKey?: string; accessToken?: string; clientId?: string; clientSecret?: string; refreshToken?: string; cx?: string; [key: string]: string | undefined; }
+
+/**
+ * Credential shapes accepted by the switchboard.
+ *   - HubSpot, Stripe: `{apiKey}` (or `{accessToken}` for HubSpot private apps)
+ *   - Google Custom Search: `{apiKey, cx}`
+ *   - Google Drive / Calendar / Analytics: `GoogleServiceAccount` (the JSON
+ *     Google IAM emits when you download a service account key)
+ */
+interface ServiceCredentials {
+  apiKey?: string;
+  accessToken?: string;  // HubSpot private app tokens
+  cx?: string;           // Google Custom Search engine ID
+  [key: string]: unknown; // allow service account JSON fields without enumerating them
+}
+
+const GOOGLE_SCOPES: Partial<Record<ServiceName, string>> = {
+  'google-drive': 'https://www.googleapis.com/auth/drive',
+  'google-calendar': 'https://www.googleapis.com/auth/calendar',
+  'google-analytics': 'https://www.googleapis.com/auth/analytics.readonly',
+};
+
+/**
+ * Resolve a bearer token for a Google-OAuth-bearing service by minting a
+ * short-lived access token from the stored service account JSON. Throws
+ * with an actionable message if the secret is missing or malformed.
+ */
+async function resolveGoogleBearer(service: ServiceName, creds: ServiceCredentials): Promise<string> {
+  const scope = GOOGLE_SCOPES[service];
+  if (!scope) throw new Error(`No Google scope configured for service: ${service}`);
+  if (!isServiceAccount(creds)) {
+    throw new Error(
+      `Invalid credentials for ${service}: expected a Google service account JSON ` +
+      `(fields: type, private_key, client_email). Populate the secret with the JSON file ` +
+      `from GCP → IAM → Service Accounts → Keys. See README "Configure Service Credentials".`
+    );
+  }
+  return getGoogleAccessToken(creds as unknown as GoogleServiceAccount, scope);
+}
 
 // Credential cache (5-min TTL)
 const credentialCache = new Map<ServiceName, { creds: ServiceCredentials; expiry: number }>();
@@ -100,7 +138,8 @@ async function routeHubSpot(tool: string, args: Record<string, unknown>, creds: 
 
 async function routeGoogleDrive(tool: string, args: Record<string, unknown>, creds: ServiceCredentials): Promise<unknown> {
   const base = 'https://www.googleapis.com/drive/v3';
-  const h = { 'Authorization': `Bearer ${creds.accessToken}` };
+  const token = await resolveGoogleBearer('google-drive', creds);
+  const h = { 'Authorization': `Bearer ${token}` };
   switch (tool) {
     case 'list_files': return (await fetch(`${base}/files?${new URLSearchParams({ pageSize: String(args.pageSize ?? 20), fields: 'files(id,name,mimeType,modifiedTime)', ...(args.query ? { q: String(args.query) } : {}) })}`, { headers: h })).json();
     case 'get_file': return (await fetch(`${base}/files/${args.fileId}?fields=*`, { headers: h })).json();
@@ -119,7 +158,8 @@ async function routeGoogleDrive(tool: string, args: Record<string, unknown>, cre
 async function routeGoogleCalendar(tool: string, args: Record<string, unknown>, creds: ServiceCredentials): Promise<unknown> {
   const calId = String(args.calendarId ?? 'primary');
   const base = `https://www.googleapis.com/calendar/v3/calendars/${encodeURIComponent(calId)}`;
-  const h = { 'Authorization': `Bearer ${creds.accessToken}`, 'Content-Type': 'application/json' };
+  const token = await resolveGoogleBearer('google-calendar', creds);
+  const h = { 'Authorization': `Bearer ${token}`, 'Content-Type': 'application/json' };
   switch (tool) {
     case 'list_events': return (await fetch(`${base}/events?${new URLSearchParams({ maxResults: '20', singleEvents: 'true', orderBy: 'startTime', ...(args.timeMin ? { timeMin: String(args.timeMin) } : {}), ...(args.timeMax ? { timeMax: String(args.timeMax) } : {}) })}`, { headers: h })).json();
     case 'create_event': return (await fetch(`${base}/events`, { method: 'POST', headers: h, body: JSON.stringify({ summary: args.summary, description: args.description, start: { dateTime: args.start, timeZone: 'UTC' }, end: { dateTime: args.end, timeZone: 'UTC' } }) })).json();
@@ -129,7 +169,8 @@ async function routeGoogleCalendar(tool: string, args: Record<string, unknown>, 
 }
 
 async function routeGoogleAnalytics(tool: string, args: Record<string, unknown>, creds: ServiceCredentials): Promise<unknown> {
-  const h = { 'Authorization': `Bearer ${creds.accessToken}`, 'Content-Type': 'application/json' };
+  const token = await resolveGoogleBearer('google-analytics', creds);
+  const h = { 'Authorization': `Bearer ${token}`, 'Content-Type': 'application/json' };
   if (tool === 'run_report') {
     return (await fetch(`https://analyticsdata.googleapis.com/v1beta/properties/${args.propertyId}:runReport`, { method: 'POST', headers: h, body: JSON.stringify({ dimensions: ((args.dimensions as string[]) ?? []).map(d => ({ name: d })), metrics: (args.metrics as string[]).map(m => ({ name: m })), dateRanges: args.dateRanges ?? [{ startDate: '30daysAgo', endDate: 'today' }] }) })).json();
   }
