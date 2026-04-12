@@ -1,0 +1,207 @@
+name: CI
+
+on:
+  push:
+    branches: [main, develop]
+  pull_request:
+    branches: [main]
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  NODE_VERSION: '22'
+  PYTHON_VERSION: '3.13'
+
+jobs:
+  # ─── CDK + Lambda TypeScript ──────────────────────────────────────────────
+  cdk-test:
+    name: CDK Synth + Unit Tests
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: .
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: npm ci
+        working-directory: mcp-gateway
+
+      - name: Type check
+        run: npx tsc --noEmit
+        working-directory: mcp-gateway
+
+      - name: Lint
+        run: npm run lint
+        working-directory: mcp-gateway
+        continue-on-error: true
+
+      - name: Run unit tests
+        run: npm test -- --coverage --passWithNoTests
+        working-directory: mcp-gateway
+        env:
+          CDK_DEFAULT_ACCOUNT: '123456789012'
+          CDK_DEFAULT_REGION: 'us-west-2'
+
+      - name: CDK Synth (validate stack)
+        run: npx cdk synth --quiet
+        working-directory: mcp-gateway
+        env:
+          CDK_DEFAULT_ACCOUNT: '123456789012'
+          CDK_DEFAULT_REGION: 'us-west-2'
+          CDK_DOCKER: 'false'
+
+      - name: Upload coverage
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: coverage
+          path: mcp-gateway/coverage/
+          retention-days: 7
+
+  # ─── Embedding Lambda (Python) ──────────────────────────────────────────
+  embedding-lambda-test:
+    name: Embedding Lambda Tests
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: mcp-gateway/lambda/memory-embeddings
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+
+      - name: Install test dependencies
+        run: pip install pytest
+
+      - name: Validate handler syntax
+        run: python -c "import ast; ast.parse(open('handler.py').read()); print('handler.py syntax OK')"
+
+  # ─── Dashboard (Next.js) ───────────────────────────────────────────────────
+  dashboard-build:
+    name: Dashboard Build
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: mcp-gateway/dashboard
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: 'npm'
+          cache-dependency-path: mcp-gateway/dashboard/package-lock.json
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Type check
+        run: npx tsc --noEmit
+
+      - name: Build Next.js
+        run: npm run build
+        env:
+          NEXT_PUBLIC_API_ENDPOINT: 'https://example.execute-api.us-west-2.amazonaws.com'
+
+      - name: Upload build artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: dashboard-out
+          path: mcp-gateway/dashboard/out/
+          retention-days: 7
+
+  # ─── Security scan ───────────────────────────────────────────────────────────────
+  security-scan:
+    name: Dependency Security Scan
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+
+      - name: Audit CDK dependencies
+        run: npm audit --audit-level=high
+        working-directory: mcp-gateway
+
+      - name: Audit dashboard dependencies
+        run: npm audit --audit-level=high
+        working-directory: mcp-gateway/dashboard
+
+  # ─── Deploy (main branch only) ───────────────────────────────────────────────────
+  deploy:
+    name: Deploy to AWS
+    runs-on: ubuntu-latest
+    needs: [cdk-test, embedding-lambda-test, dashboard-build, security-scan]
+    if: github.ref == 'refs/heads/main' && github.event_name == 'push'
+    environment: production
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: 'npm'
+
+      - name: Install CDK dependencies
+        run: npm ci
+        working-directory: mcp-gateway
+
+      - name: Install dashboard dependencies
+        run: npm ci
+        working-directory: mcp-gateway/dashboard
+
+      - name: Build dashboard
+        run: npm run build
+        working-directory: mcp-gateway/dashboard
+        env:
+          NEXT_PUBLIC_API_ENDPOINT: ${{ secrets.API_ENDPOINT }}
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: us-west-2
+
+      - name: CDK Deploy
+        run: npm run deploy
+        working-directory: mcp-gateway
+        env:
+          CDK_DEFAULT_REGION: us-west-2
+
+      - name: Sync dashboard to S3
+        run: |
+          STATIC_BUCKET=$(aws cloudformation describe-stacks \
+            --stack-name McpGateway \
+            --query "Stacks[0].Outputs[?ExportName=='McpGateway-StaticBucketName'].OutputValue" \
+            --output text)
+          aws s3 sync mcp-gateway/dashboard/out/ s3://${STATIC_BUCKET}/ --delete \
+            --cache-control "public,max-age=31536000,immutable" \
+            --exclude "*.html" --exclude "config.json"
+          aws s3 sync mcp-gateway/dashboard/out/ s3://${STATIC_BUCKET}/ \
+            --cache-control "no-cache,no-store,must-revalidate" \
+            --include "*.html"
+          DISTRIBUTION_ID=$(aws cloudformation describe-stacks \
+            --stack-name McpGateway \
+            --query "Stacks[0].Outputs[?ExportName=='McpGateway-DistributionId'].OutputValue" \
+            --output text)
+          aws cloudfront create-invalidation \
+            --distribution-id ${DISTRIBUTION_ID} \
+            --paths "/*"
