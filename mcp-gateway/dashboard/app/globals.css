@@ -1,0 +1,6 @@
+@import "tailwindcss";
+
+body { font-family: 'Courier New', Courier, monospace; }
+
+.stat-card { @apply bg-gray-900 border border-gray-800 rounded-lg p-4; }
+.alert-pulse { animation: pulse 2s cubic-bezier(0.4, 0, 0.6, 1) infinite; }
