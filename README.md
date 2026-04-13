@@ -8,6 +8,7 @@ Prototyped ideas built from [nanohype](https://github.com/nanohype/nanohype) tem
 |---------|-------------|----------------|
 | [sigint](sigint/) | Competitive intelligence radar — crawls AI SaaS competitors, semantic diffs, LLM analysis, Slack alerts | worker-service, data-pipeline, rag-pipeline, module-vector-store, module-notifications, slack-bot |
 | [mcp-switchboard](mcp-switchboard/) | Self-hosted MCP gateway — HubSpot, Google Drive, Calendar, Analytics, CSE, Stripe as remote MCP servers behind one AWS API Gateway + Lambda | mcp-server-ts, infra-aws, module-auth |
+| [mcp-gateway](mcp-gateway/) | Three subsystems behind one HTTP API Gateway + shared bearer token auth: MCP switchboard (HubSpot, Google Drive, Calendar, Analytics, CSE, Stripe), DynamoDB-backed semantic memory server (sentence-transformers embeddings, cosine similarity), and a Next.js cost dashboard fed by an S3 cost-event ingest endpoint | infra-aws, mcp-server-ts, module-auth, module-vector-store |
 
 ## What Is This
 

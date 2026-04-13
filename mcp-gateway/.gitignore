@@ -1,0 +1,20 @@
+# dependencies
+node_modules/
+
+# cdk
+cdk.out/
+*.js
+*.d.ts
+!jest.config.js
+!jest.smoke.config.js
+!eslint.config.mjs
+dist/
+
+# next.js build artifacts (from accidental builds at the project root)
+.next/
+
+# test coverage
+coverage/
+
+# env
+.env
