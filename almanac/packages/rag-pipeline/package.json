@@ -1,0 +1,23 @@
+{
+  "name": "@almanac/rag-pipeline",
+  "version": "1.0.0",
+  "private": true,
+  "main": "dist/index.js",
+  "scripts": {
+    "build": "tsc --build",
+    "test": "jest",
+    "lint": "eslint 'src/**/*.ts'"
+  },
+  "dependencies": {
+    "@aws-sdk/client-bedrock-runtime": "^3.0.0",
+    "@opensearch-project/opensearch": "^3.0.0",
+    "date-fns": "^3.0.0",
+    "uuid": "^9.0.0"
+  },
+  "devDependencies": { "@types/uuid": "^9.0.0", "ts-jest": "^29.0.0" },
+  "jest": {
+    "preset": "ts-jest",
+    "testEnvironment": "node",
+    "testMatch": ["**/test/**/*.test.ts"]
+  }
+}
