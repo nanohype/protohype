@@ -1,16 +1,26 @@
 {
   "name": "almanac",
   "private": true,
-  "workspaces": ["packages/*"],
+  "workspaces": [
+    "packages/*",
+    "infra"
+  ],
   "scripts": {
-    "build": "turbo run build",
-    "dev": "turbo run dev --parallel",
-    "test": "turbo run test",
-    "lint": "turbo run lint",
-    "type-check": "turbo run type-check"
+    "build": "tsc --build packages/*/tsconfig.json infra/tsconfig.json",
+    "test": "jest --projects packages/*/jest.config.js",
+    "lint": "eslint 'packages/*/src/**/*.ts' 'infra/lib/**/*.ts'",
+    "audit": "npm audit --audit-level=high"
   },
   "devDependencies": {
-    "turbo": "^2.0.0",
+    "@types/node": "^20.0.0",
+    "@typescript-eslint/eslint-plugin": "^7.0.0",
+    "@typescript-eslint/parser": "^7.0.0",
+    "eslint": "^8.57.0",
+    "jest": "^29.0.0",
+    "ts-jest": "^29.0.0",
     "typescript": "^5.4.0"
+  },
+  "engines": {
+    "node": ">=20.0.0"
   }
 }
