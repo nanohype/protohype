@@ -1,0 +1,26 @@
+{
+  "name": "@almanac/ai",
+  "version": "0.1.0",
+  "type": "module",
+  "main": "./dist/pipeline.js",
+  "types": "./dist/pipeline.d.ts",
+  "exports": {
+    ".": {
+      "import": "./dist/pipeline.js",
+      "types": "./dist/pipeline.d.ts"
+    }
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "test": "node --experimental-vm-modules node_modules/.bin/jest",
+    "lint": "eslint src",
+    "type-check": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@aws-sdk/client-bedrock-runtime": "^3.600.0"
+  },
+  "devDependencies": {
+    "@types/node": "^20.0.0",
+    "typescript": "^5.4.0"
+  }
+}

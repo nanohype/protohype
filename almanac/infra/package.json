@@ -1,0 +1,22 @@
+{
+  "name": "@almanac/infra",
+  "version": "0.1.0",
+  "type": "module",
+  "scripts": {
+    "build": "tsc",
+    "synth": "cdk synth",
+    "deploy:staging": "cdk deploy AlmanacStaging --require-approval never",
+    "deploy:prod": "cdk deploy AlmanacProduction --require-approval broadening",
+    "diff": "cdk diff"
+  },
+  "dependencies": {
+    "aws-cdk-lib": "^2.145.0",
+    "constructs": "^10.3.0",
+    "source-map-support": "^0.5.21"
+  },
+  "devDependencies": {
+    "@types/node": "^20.0.0",
+    "aws-cdk": "^2.145.0",
+    "typescript": "^5.4.0"
+  }
+}

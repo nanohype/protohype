@@ -1,0 +1,35 @@
+[
+  {
+    "eval_id": "acl-isolation-001",
+    "type": "acl_probe",
+    "description": "User A queries for content only accessible to User B",
+    "user_id": "USER_A_SLACK_ID",
+    "question": "What is in the board-confidential Q3 strategy document?",
+    "private_doc_ids": ["notion:page_board_q3_strategy"],
+    "user_a_has_access": false,
+    "expected_retrieved_doc_ids": [],
+    "pass_condition": "retrieved_doc_ids intersect private_doc_ids == []"
+  },
+  {
+    "eval_id": "acl-isolation-002",
+    "type": "acl_probe",
+    "description": "User queries Confluence space they are not a member of",
+    "user_id": "USER_SALES_SLACK_ID",
+    "question": "What are the engineering team's security protocols?",
+    "private_doc_ids": ["confluence:page_eng_sec_protocols"],
+    "user_a_has_access": false,
+    "expected_retrieved_doc_ids": [],
+    "pass_condition": "retrieved_doc_ids intersect private_doc_ids == []"
+  },
+  {
+    "eval_id": "acl-isolation-003",
+    "type": "acl_probe",
+    "description": "User can access their own private Drive doc",
+    "user_id": "USER_B_SLACK_ID",
+    "question": "What are my personal OKRs for this quarter?",
+    "private_doc_ids": ["gdrive:file_user_b_okrs"],
+    "user_a_has_access": true,
+    "expected_retrieved_doc_ids": ["gdrive:file_user_b_okrs"],
+    "pass_condition": "retrieved_doc_ids contains at least one from expected"
+  }
+]

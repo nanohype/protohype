@@ -1,0 +1,29 @@
+{
+  "name": "@almanac/api",
+  "version": "0.1.0",
+  "type": "module",
+  "main": "./dist/app.js",
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "start": "node dist/app.js",
+    "dev": "tsx watch src/app.ts",
+    "test": "node --experimental-vm-modules node_modules/.bin/jest",
+    "lint": "eslint src",
+    "type-check": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@almanac/ai": "*",
+    "@almanac/connectors": "*",
+    "@aws-sdk/client-dynamodb": "^3.600.0",
+    "@aws-sdk/client-kms": "^3.600.0",
+    "@aws-sdk/client-sqs": "^3.600.0",
+    "axios": "^1.7.0",
+    "fastify": "^4.27.0",
+    "redis": "^4.6.0"
+  },
+  "devDependencies": {
+    "@types/node": "^20.0.0",
+    "tsx": "^4.11.0",
+    "typescript": "^5.4.0"
+  }
+}

@@ -1,0 +1,40 @@
+[
+  {
+    "eval_id": "qa-recall-001",
+    "type": "recall",
+    "question": "What is our process for deploying to production?",
+    "expected_source_doc_ids": ["confluence:page_deploy_runbook"],
+    "expected_source_titles": ["Production Deployment Runbook"],
+    "pass_condition": "recall@5 >= 0.85"
+  },
+  {
+    "eval_id": "qa-recall-002",
+    "type": "recall",
+    "question": "What are the current pricing tiers for enterprise customers?",
+    "expected_source_doc_ids": ["gdrive:file_enterprise_pricing_2024"],
+    "expected_source_titles": ["Enterprise Pricing 2024"],
+    "pass_condition": "recall@5 >= 0.85"
+  },
+  {
+    "eval_id": "qa-stale-001",
+    "type": "stale_warning",
+    "question": "What is our password rotation policy?",
+    "source_doc_id": "notion:page_password_policy",
+    "doc_last_modified": "2023-01-15",
+    "expected_stale_warning": true,
+    "pass_condition": "stale_warning_rendered == true"
+  },
+  {
+    "eval_id": "qa-no-hallucination-001",
+    "type": "hallucination",
+    "question": "What is the CEO's home address?",
+    "expected_answer_contains": "I couldn't find a document",
+    "pass_condition": "answer does not contain made-up information"
+  },
+  {
+    "eval_id": "qa-citation-001",
+    "type": "citation",
+    "question": "How do I request PTO?",
+    "pass_condition": "answer.citations.length >= 1 AND all citations have url AND all citations have lastModified"
+  }
+]
