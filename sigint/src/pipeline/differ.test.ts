@@ -1,6 +1,6 @@
 import { describe, it, expect } from "vitest";
 import { semanticDiff } from "./differ.js";
-import type { VectorStore, VectorDocument, SearchResult } from "../providers/vectors.js";
+import type { VectorStore, SearchResult } from "../providers/vectors.js";
 import type { Chunk } from "./chunker.js";
 
 function makeChunk(id: string, text: string): Chunk {
