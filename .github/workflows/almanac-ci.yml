@@ -1,0 +1,62 @@
+name: almanac-ci
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'almanac/**'
+      - '.github/workflows/almanac-ci.yml'
+  pull_request:
+    paths:
+      - 'almanac/**'
+      - '.github/workflows/almanac-ci.yml'
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: almanac
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+          cache: 'npm'
+          cache-dependency-path: almanac/package-lock.json
+
+      - name: Install (app)
+        # `npm install` instead of `npm ci`: the lockfile is generated on
+        # macOS and omits Linux platform-specific optional deps that
+        # vitest/rolldown pull in. `npm install` resolves them on the Linux
+        # runner; version pinning comes from the lockfile regardless.
+        run: npm install --prefer-offline --no-audit --no-fund
+
+      - name: Install (almanac-oauth package)
+        run: npm install --prefer-offline --no-audit --no-fund
+        working-directory: almanac/packages/oauth
+
+      - name: Build almanac-oauth
+        run: npm run build
+        working-directory: almanac/packages/oauth
+
+      - name: Lint
+        run: npm run lint
+
+      - name: Typecheck
+        run: npm run typecheck
+
+      - name: Test
+        run: npm test
+
+      - name: Build (emit dist)
+        run: npm run build
+
+      - name: Install CDK deps (infra workspace)
+        run: npm install --prefer-offline --no-audit --no-fund
+        working-directory: almanac/infra
+
+      - name: CDK synth (staging, env-agnostic)
+        run: npx cdk synth AlmanacStaging
+        working-directory: almanac/infra
