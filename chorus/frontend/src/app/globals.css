@@ -1,0 +1,162 @@
+@import 'tailwindcss';
+
+@layer base {
+  :root {
+    --color-fg: 17 24 39;
+    --color-fg-muted: 75 85 99;
+    --color-bg: 255 255 255;
+    --color-bg-elevated: 249 250 251;
+    --color-border: 229 231 235;
+    --color-accent: 79 70 229;
+    --color-accent-fg: 255 255 255;
+    --color-warn: 217 119 6;
+    --color-success: 5 150 105;
+    --color-danger: 220 38 38;
+
+    /* Motion tokens. Derived from physical spring shapes rather than
+       arbitrary beziers. `--motion-spring` is the default easing for
+       UI transitions — a soft decelerating curve that settles without
+       overshoot. `--motion-fast` is for affordance feedback (hover,
+       focus, active); `--motion-slow` for state-change reveals.
+       Durations are nominal; interactions that overlap should use the
+       shorter variant so stacked animations don't feel sluggish. */
+    --motion-spring: cubic-bezier(0.33, 1, 0.68, 1);
+    --motion-fast: 120ms;
+    --motion-slow: 280ms;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --color-fg: 243 244 246;
+      --color-fg-muted: 156 163 175;
+      --color-bg: 17 24 39;
+      --color-bg-elevated: 31 41 55;
+      --color-border: 55 65 81;
+      --color-accent: 129 140 248;
+      --color-accent-fg: 17 24 39;
+    }
+  }
+  @media (prefers-reduced-motion: reduce) {
+    *,
+    *::before,
+    *::after {
+      transition-duration: 0.01ms !important;
+      animation-duration: 0.01ms !important;
+    }
+  }
+  body {
+    color: rgb(var(--color-fg));
+    background: rgb(var(--color-bg));
+    font-family: ui-sans-serif, system-ui, -apple-system, sans-serif;
+  }
+
+  :focus-visible {
+    outline: 2px solid rgb(var(--color-accent));
+    outline-offset: 2px;
+    border-radius: 4px;
+  }
+}
+
+@layer components {
+  .card {
+    @apply rounded-lg border p-4;
+    border-color: rgb(var(--color-border));
+    background: rgb(var(--color-bg-elevated));
+    transition:
+      border-color var(--motion-fast) var(--motion-spring),
+      transform var(--motion-fast) var(--motion-spring),
+      box-shadow var(--motion-fast) var(--motion-spring);
+  }
+  .card-interactive {
+    @apply cursor-pointer;
+  }
+  .card-interactive:hover {
+    border-color: rgb(var(--color-accent));
+    transform: translateY(-1px);
+    box-shadow: 0 4px 12px -6px rgb(var(--color-accent) / 0.25);
+  }
+  .card-interactive:focus-within {
+    border-color: rgb(var(--color-accent));
+  }
+
+  .btn {
+    @apply inline-flex items-center justify-center gap-2 rounded-md px-3 py-1.5 text-sm font-medium;
+    transition:
+      background-color var(--motion-fast) var(--motion-spring),
+      opacity var(--motion-fast) var(--motion-spring),
+      transform var(--motion-fast) var(--motion-spring);
+  }
+  .btn:active:not(:disabled) {
+    transform: scale(0.98);
+  }
+  .btn:disabled {
+    @apply cursor-not-allowed opacity-50;
+  }
+  .btn-primary {
+    background: rgb(var(--color-accent));
+    color: rgb(var(--color-accent-fg));
+  }
+  .btn-primary:hover:not(:disabled) {
+    opacity: 0.9;
+  }
+  .btn-secondary {
+    @apply border;
+    border-color: rgb(var(--color-border));
+    color: rgb(var(--color-fg));
+  }
+  .btn-secondary:hover:not(:disabled) {
+    background: rgb(var(--color-bg-elevated));
+  }
+  .btn-danger {
+    background: rgb(var(--color-danger));
+    color: white;
+  }
+  .btn-danger:hover:not(:disabled) {
+    opacity: 0.9;
+  }
+
+  .field-input {
+    @apply w-full rounded border bg-transparent px-2 py-1 text-sm;
+    border-color: rgb(var(--color-border));
+    color: rgb(var(--color-fg));
+    transition: border-color var(--motion-fast) var(--motion-spring);
+  }
+  .field-input:focus {
+    border-color: rgb(var(--color-accent));
+  }
+
+  .pill {
+    @apply inline-flex items-center rounded-full px-2 py-0.5 text-xs font-medium;
+    background: rgb(var(--color-bg-elevated));
+    color: rgb(var(--color-fg-muted));
+    border: 1px solid rgb(var(--color-border));
+  }
+  .pill-link {
+    background: rgb(var(--color-success) / 0.1);
+    color: rgb(var(--color-success));
+    border-color: rgb(var(--color-success) / 0.3);
+  }
+  .pill-new {
+    background: rgb(var(--color-accent) / 0.1);
+    color: rgb(var(--color-accent));
+    border-color: rgb(var(--color-accent) / 0.3);
+  }
+
+  .surface-border {
+    border-color: rgb(var(--color-border));
+  }
+  .text-danger {
+    color: rgb(var(--color-danger));
+  }
+
+  .alert-danger {
+    @apply rounded-lg border p-4;
+    border-color: rgb(var(--color-danger) / 0.4);
+    background: rgb(var(--color-danger) / 0.08);
+  }
+  .alert-muted {
+    @apply rounded-lg border p-4 text-center text-sm;
+    border-color: rgb(var(--color-border));
+    background: rgb(var(--color-bg-elevated));
+    color: rgb(var(--color-fg-muted));
+  }
+}

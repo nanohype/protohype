@@ -1,0 +1,71 @@
+name: chorus-ci
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'chorus/**'
+      - '.github/workflows/chorus-ci.yml'
+  pull_request:
+    paths:
+      - 'chorus/**'
+      - '.github/workflows/chorus-ci.yml'
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: chorus
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+          cache: 'npm'
+          cache-dependency-path: chorus/package-lock.json
+
+      - name: Install
+        # `npm install` instead of `npm ci`: the lockfile is generated on
+        # macOS and omits Linux platform-conditional optional binaries
+        # that vitest/rolldown/next pull in. `npm install` resolves them
+        # on the Linux runner; version pinning still comes from the
+        # lockfile.
+        run: npm install --prefer-offline --no-audit --no-fund
+
+      - name: Lint
+        run: npm run lint
+
+      - name: Typecheck
+        run: npm run typecheck
+
+      - name: Format check
+        run: npm run format:check
+
+      - name: Test
+        run: npm test
+
+      - name: Build (emit dist)
+        run: npm run build
+
+      - name: CDK synth (env-agnostic)
+        run: npm run cdk:synth
+
+      - name: Install web workspace
+        # Same reason as the chorus install step: the lockfile lacks
+        # Linux platform-conditional binaries (rolldown, lightningcss,
+        # esbuild) that Next.js 16 pulls in on Linux runners.
+        run: npm install --prefer-offline --no-audit --no-fund
+        working-directory: chorus/frontend
+
+      - name: Web typecheck
+        run: npx tsc --noEmit
+        working-directory: chorus/frontend
+
+      - name: Web build (Next.js standalone)
+        run: npm run build
+        working-directory: chorus/frontend
+        env:
+          AUTH_SECRET: ci-placeholder-replaced-at-deploy
+          NEXTAUTH_URL: https://chorus.internal

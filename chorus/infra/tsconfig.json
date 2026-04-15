@@ -1,0 +1,14 @@
+{
+  "extends": "../tsconfig.json",
+  "compilerOptions": {
+    // CDK's typings predate exactOptionalPropertyTypes; many `Iface`
+    // shapes declare `foo?: T` while concrete classes expose
+    // `foo?: T | undefined`. Relax strict-optional checks for infra/
+    // only — production source under src/ keeps the strict setting.
+    "exactOptionalPropertyTypes": false,
+    "composite": true,
+    "rootDir": ".",
+    "types": ["node"]
+  },
+  "include": ["./**/*.ts"]
+}

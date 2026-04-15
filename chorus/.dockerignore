@@ -1,0 +1,22 @@
+# Build context exclusions. Source needs to be present for the
+# builder stage to compile; only artifacts and host-only files are
+# excluded here.
+node_modules
+dist
+cdk.out
+coverage
+.git
+.gitignore
+.github
+.vscode
+.idea
+.DS_Store
+*.log
+.env
+.env.*
+!.env.example
+.claude
+frontend
+*.tsbuildinfo
+Dockerfile*
+.dockerignore

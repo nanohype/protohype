@@ -1,0 +1,52 @@
+{
+  "name": "chorus",
+  "version": "0.1.0",
+  "description": "Cross-channel feedback intelligence — library scaffold (utilities, matching, schema)",
+  "type": "module",
+  "engines": {
+    "node": ">=24"
+  },
+  "scripts": {
+    "build": "tsc",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "migrate": "tsx scripts/migrate.ts",
+    "lint": "eslint src infra",
+    "format": "prettier --write \"src/**/*.ts\" \"scripts/**/*.ts\" \"infra/**/*.ts\"",
+    "format:check": "prettier --check \"src/**/*.ts\" \"scripts/**/*.ts\" \"infra/**/*.ts\"",
+    "typecheck": "tsc --noEmit",
+    "cdk:synth": "cdk synth --app \"npx tsx infra/bin/chorus.ts\"",
+    "cdk:diff": "cdk diff --app \"npx tsx infra/bin/chorus.ts\"",
+    "cdk:deploy": "cdk deploy --app \"npx tsx infra/bin/chorus.ts\""
+  },
+  "dependencies": {
+    "@aws-sdk/client-bedrock-runtime": "^3.1030.0",
+    "@aws-sdk/client-comprehend": "^3.1030.0",
+    "@aws-sdk/client-secrets-manager": "^3.1030.0",
+    "@aws-sdk/client-sqs": "^3.1030.0",
+    "aws-cdk-lib": "^2.250.0",
+    "constructs": "^10.6.0",
+    "cors": "^2.8.6",
+    "express": "^5.2.1",
+    "express-rate-limit": "^8.3.2",
+    "helmet": "^8.1.0",
+    "jose": "^6.2.2",
+    "pg": "^8.20.0"
+  },
+  "devDependencies": {
+    "@eslint/js": "^10.0.1",
+    "@types/cors": "^2.8.19",
+    "@types/express": "^5.0.6",
+    "@types/node": "^24.12.2",
+    "@types/pg": "^8.11.0",
+    "@vitest/coverage-v8": "^4.1.4",
+    "aws-cdk": "^2.250.0",
+    "eslint": "^10.2.0",
+    "globals": "^17.5.0",
+    "prettier": "^3.8.2",
+    "tsx": "^4.21.0",
+    "typescript": "^6.0.2",
+    "typescript-eslint": "^8.58.2",
+    "vitest": "^4.1.4"
+  }
+}
