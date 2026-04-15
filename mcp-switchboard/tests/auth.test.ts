@@ -12,10 +12,21 @@ const { mockSend } = vi.hoisted(() => ({
   mockSend: vi.fn(),
 }));
 
-vi.mock('@aws-sdk/client-secrets-manager', () => ({
-  SecretsManagerClient: vi.fn().mockImplementation(() => ({ send: mockSend })),
-  GetSecretValueCommand: vi.fn().mockImplementation(input => ({ input })),
-}));
+vi.mock('@aws-sdk/client-secrets-manager', () => {
+  class MockSecretsManagerClient {
+    send = mockSend;
+  }
+  class MockGetSecretValueCommand {
+    input: unknown;
+    constructor(input: unknown) {
+      this.input = input;
+    }
+  }
+  return {
+    SecretsManagerClient: MockSecretsManagerClient,
+    GetSecretValueCommand: MockGetSecretValueCommand,
+  };
+});
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 

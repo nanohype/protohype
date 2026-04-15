@@ -14,15 +14,16 @@ const mockPaymentIntents = { list: vi.fn(), retrieve: vi.fn() };
 const mockSubscriptions = { list: vi.fn(), retrieve: vi.fn() };
 const mockInvoices = { list: vi.fn(), retrieve: vi.fn() };
 
-vi.mock('stripe', () => ({
-  default: vi.fn().mockImplementation(() => ({
-    balance: mockBalance,
-    customers: mockCustomers,
-    paymentIntents: mockPaymentIntents,
-    subscriptions: mockSubscriptions,
-    invoices: mockInvoices,
-  })),
-}));
+vi.mock('stripe', () => {
+  class MockStripe {
+    balance = mockBalance;
+    customers = mockCustomers;
+    paymentIntents = mockPaymentIntents;
+    subscriptions = mockSubscriptions;
+    invoices = mockInvoices;
+  }
+  return { default: MockStripe };
+});
 
 // ─── Helper ───────────────────────────────────────────────────────────────────
 

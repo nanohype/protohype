@@ -3,6 +3,9 @@
   "version": "0.1.0",
   "description": "CDK infrastructure for mcp-switchboard",
   "type": "module",
+  "engines": {
+    "node": ">=24"
+  },
   "scripts": {
     "build": "tsc",
     "synth": "cdk synth",
@@ -11,12 +14,12 @@
     "diff": "cdk diff"
   },
   "dependencies": {
-    "aws-cdk-lib": "^2.170.0",
-    "constructs": "^10.4.0"
+    "aws-cdk-lib": "^2.250.0",
+    "constructs": "^10.6.0"
   },
   "devDependencies": {
-    "@types/node": "^22.0.0",
-    "aws-cdk": "^2.170.0",
-    "typescript": "^5.7.0"
+    "@types/node": "^24.12.2",
+    "aws-cdk": "^2.1118.0",
+    "typescript": "^6.0.2"
   }
 }
