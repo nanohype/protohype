@@ -26,14 +26,16 @@ export function createGDriveServer(creds: GoogleSACredentials): McpServer {
   const drive = buildDriveClient(creds);
   const server = new McpServer({ name: 'mcp-gdrive', version: '0.1.0' });
 
-  server.tool(
+  server.registerTool(
     'gdrive_list_files',
-    'List files in Google Drive. Optionally filter by folder or MIME type.',
     {
-      folderId: z.string().optional().describe('Parent folder ID. Omit for root.'),
-      mimeType: z.string().optional().describe('Filter by MIME type (e.g., application/vnd.google-apps.document)'),
-      pageSize: z.number().int().min(1).max(100).default(20).describe('Max results'),
-      pageToken: z.string().optional().describe('Pagination token from previous response'),
+      description: 'List files in Google Drive. Optionally filter by folder or MIME type.',
+      inputSchema: {
+        folderId: z.string().optional().describe('Parent folder ID. Omit for root.'),
+        mimeType: z.string().optional().describe('Filter by MIME type (e.g., application/vnd.google-apps.document)'),
+        pageSize: z.number().int().min(1).max(100).default(20).describe('Max results'),
+        pageToken: z.string().optional().describe('Pagination token from previous response'),
+      },
     },
     async ({ folderId, mimeType, pageSize, pageToken }) => {
       const q: string[] = ["trashed = false"];
@@ -50,13 +52,15 @@ export function createGDriveServer(creds: GoogleSACredentials): McpServer {
     }
   );
 
-  server.tool(
+  server.registerTool(
     'gdrive_search_files',
-    'Full-text search across Google Drive files.',
     {
-      query: z.string().describe('Search query (e.g., "quarterly report" or "name contains \'budget\'")'),
-      pageSize: z.number().int().min(1).max(100).default(10).describe('Max results'),
-      pageToken: z.string().optional().describe('Pagination token'),
+      description: 'Full-text search across Google Drive files.',
+      inputSchema: {
+        query: z.string().describe('Search query (e.g., "quarterly report" or "name contains \'budget\'")'),
+        pageSize: z.number().int().min(1).max(100).default(10).describe('Max results'),
+        pageToken: z.string().optional().describe('Pagination token'),
+      },
     },
     async ({ query, pageSize, pageToken }) => {
       const res = await drive.files.list({
@@ -69,11 +73,13 @@ export function createGDriveServer(creds: GoogleSACredentials): McpServer {
     }
   );
 
-  server.tool(
+  server.registerTool(
     'gdrive_get_file',
-    'Get metadata for a specific Google Drive file.',
     {
-      fileId: z.string().describe('Google Drive file ID'),
+      description: 'Get metadata for a specific Google Drive file.',
+      inputSchema: {
+        fileId: z.string().describe('Google Drive file ID'),
+      },
     },
     async ({ fileId }) => {
       const res = await drive.files.get({
@@ -84,11 +90,13 @@ export function createGDriveServer(creds: GoogleSACredentials): McpServer {
     }
   );
 
-  server.tool(
+  server.registerTool(
     'gdrive_read_file',
-    'Read the text content of a Google Drive file. Supports Google Docs (exported as plain text) and plain text files.',
     {
-      fileId: z.string().describe('Google Drive file ID'),
+      description: 'Read the text content of a Google Drive file. Supports Google Docs (exported as plain text) and plain text files.',
+      inputSchema: {
+        fileId: z.string().describe('Google Drive file ID'),
+      },
     },
     async ({ fileId }) => {
       // First get metadata to determine type
@@ -119,14 +127,16 @@ export function createGDriveServer(creds: GoogleSACredentials): McpServer {
     }
   );
 
-  server.tool(
+  server.registerTool(
     'gdrive_create_file',
-    'Create a new text file in Google Drive.',
     {
-      name: z.string().describe('File name'),
-      content: z.string().describe('Text content of the file'),
-      folderId: z.string().optional().describe('Parent folder ID. Omit for root.'),
-      mimeType: z.string().default('text/plain').describe('MIME type of the file content'),
+      description: 'Create a new text file in Google Drive.',
+      inputSchema: {
+        name: z.string().describe('File name'),
+        content: z.string().describe('Text content of the file'),
+        folderId: z.string().optional().describe('Parent folder ID. Omit for root.'),
+        mimeType: z.string().default('text/plain').describe('MIME type of the file content'),
+      },
     },
     async ({ name, content, folderId, mimeType }) => {
       const media = { mimeType, body: content };

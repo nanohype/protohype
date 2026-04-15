@@ -26,46 +26,48 @@ export function createAnalyticsServer(creds: AnalyticsCredentials): McpServer {
   const analytics = buildAnalyticsClient(creds);
   const server = new McpServer({ name: 'mcp-analytics', version: '0.1.0' });
 
-  server.tool(
+  server.registerTool(
     'ga_run_report',
-    'Run a Google Analytics 4 report. Returns metrics and dimensions for the specified date range.',
     {
-      propertyId: z
-        .string()
-        .optional()
-        .describe('GA4 property ID (e.g., "123456789"). Defaults to the configured property.'),
-      dateRanges: z
-        .array(
-          z.object({
-            startDate: z.string().describe('Start date (e.g., "2025-01-01" or "7daysAgo")'),
-            endDate: z.string().describe('End date (e.g., "2025-01-31" or "today")'),
-          })
-        )
-        .min(1)
-        .max(4)
-        .describe('One or more date ranges'),
-      dimensions: z
-        .array(z.string())
-        .optional()
-        .describe('Dimension names (e.g., ["date", "country", "sessionSource"])'),
-      metrics: z
-        .array(z.string())
-        .describe('Metric names (e.g., ["sessions", "activeUsers", "bounceRate"])'),
-      dimensionFilter: z
-        .string()
-        .optional()
-        .describe('Optional JSON-encoded DimensionFilterClause'),
-      orderBys: z
-        .array(
-          z.object({
-            metric: z.object({ metricName: z.string() }).optional(),
-            dimension: z.object({ dimensionName: z.string() }).optional(),
-            desc: z.boolean().default(false),
-          })
-        )
-        .optional()
-        .describe('Sort order'),
-      limit: z.number().int().min(1).max(10000).default(100).describe('Row limit'),
+      description: 'Run a Google Analytics 4 report. Returns metrics and dimensions for the specified date range.',
+      inputSchema: {
+        propertyId: z
+          .string()
+          .optional()
+          .describe('GA4 property ID (e.g., "123456789"). Defaults to the configured property.'),
+        dateRanges: z
+          .array(
+            z.object({
+              startDate: z.string().describe('Start date (e.g., "2025-01-01" or "7daysAgo")'),
+              endDate: z.string().describe('End date (e.g., "2025-01-31" or "today")'),
+            })
+          )
+          .min(1)
+          .max(4)
+          .describe('One or more date ranges'),
+        dimensions: z
+          .array(z.string())
+          .optional()
+          .describe('Dimension names (e.g., ["date", "country", "sessionSource"])'),
+        metrics: z
+          .array(z.string())
+          .describe('Metric names (e.g., ["sessions", "activeUsers", "bounceRate"])'),
+        dimensionFilter: z
+          .string()
+          .optional()
+          .describe('Optional JSON-encoded DimensionFilterClause'),
+        orderBys: z
+          .array(
+            z.object({
+              metric: z.object({ metricName: z.string() }).optional(),
+              dimension: z.object({ dimensionName: z.string() }).optional(),
+              desc: z.boolean().default(false),
+            })
+          )
+          .optional()
+          .describe('Sort order'),
+        limit: z.number().int().min(1).max(10000).default(100).describe('Row limit'),
+      },
     },
     async ({ propertyId, dateRanges, dimensions, metrics, limit, orderBys }) => {
       const pid = propertyId ?? creds.propertyId;
@@ -87,20 +89,22 @@ export function createAnalyticsServer(creds: AnalyticsCredentials): McpServer {
     }
   );
 
-  server.tool(
+  server.registerTool(
     'ga_realtime_report',
-    'Get realtime Google Analytics 4 data (active users, top pages, traffic sources).',
     {
-      propertyId: z.string().optional().describe('GA4 property ID. Defaults to the configured property.'),
-      dimensions: z
-        .array(z.string())
-        .default(['unifiedScreenName'])
-        .describe('Realtime dimensions (e.g., ["country", "unifiedScreenName"])'),
-      metrics: z
-        .array(z.string())
-        .default(['activeUsers'])
-        .describe('Realtime metrics (e.g., ["activeUsers"])'),
-      limit: z.number().int().min(1).max(100).default(10).describe('Row limit'),
+      description: 'Get realtime Google Analytics 4 data (active users, top pages, traffic sources).',
+      inputSchema: {
+        propertyId: z.string().optional().describe('GA4 property ID. Defaults to the configured property.'),
+        dimensions: z
+          .array(z.string())
+          .default(['unifiedScreenName'])
+          .describe('Realtime dimensions (e.g., ["country", "unifiedScreenName"])'),
+        metrics: z
+          .array(z.string())
+          .default(['activeUsers'])
+          .describe('Realtime metrics (e.g., ["activeUsers"])'),
+        limit: z.number().int().min(1).max(100).default(10).describe('Row limit'),
+      },
     },
     async ({ propertyId, dimensions, metrics, limit }) => {
       const pid = propertyId ?? creds.propertyId;
@@ -116,11 +120,13 @@ export function createAnalyticsServer(creds: AnalyticsCredentials): McpServer {
     }
   );
 
-  server.tool(
+  server.registerTool(
     'ga_list_properties',
-    'List Google Analytics 4 properties accessible to the service account.',
     {
-      accountId: z.string().optional().describe('GA account ID to filter by'),
+      description: 'List Google Analytics 4 properties accessible to the service account.',
+      inputSchema: {
+        accountId: z.string().optional().describe('GA account ID to filter by'),
+      },
     },
     async ({ accountId }) => {
       // Use the Admin API to list properties

@@ -36,9 +36,12 @@ const mockClient = {
   },
 };
 
-vi.mock('@hubspot/api-client', () => ({
-  Client: vi.fn().mockImplementation(() => mockClient),
-}));
+vi.mock('@hubspot/api-client', () => {
+  class MockClient {
+    crm = mockClient.crm;
+  }
+  return { Client: MockClient };
+});
 
 // ─── Helper ───────────────────────────────────────────────────────────────────
 

@@ -15,13 +15,15 @@ export function createHubSpotServer(credentials: { apiKey: string }): McpServer 
 
   // ─── Contacts ─────────────────────────────────────────────────────────────
 
-  server.tool(
+  server.registerTool(
     'hubspot_list_contacts',
-    'List HubSpot contacts. Optionally filter by email or name query.',
     {
-      limit: z.number().int().min(1).max(100).default(20).describe('Max results to return'),
-      query: z.string().optional().describe('Search query to filter contacts by name or email'),
-      after: z.string().optional().describe('Pagination cursor from previous response'),
+      description: 'List HubSpot contacts. Optionally filter by email or name query.',
+      inputSchema: {
+        limit: z.number().int().min(1).max(100).default(20).describe('Max results to return'),
+        query: z.string().optional().describe('Search query to filter contacts by name or email'),
+        after: z.string().optional().describe('Pagination cursor from previous response'),
+      },
     },
     async ({ limit, query, after }) => {
       try {
@@ -51,11 +53,13 @@ export function createHubSpotServer(credentials: { apiKey: string }): McpServer 
     }
   );
 
-  server.tool(
+  server.registerTool(
     'hubspot_get_contact',
-    'Get a HubSpot contact by ID.',
     {
-      contactId: z.string().describe('HubSpot contact ID'),
+      description: 'Get a HubSpot contact by ID.',
+      inputSchema: {
+        contactId: z.string().describe('HubSpot contact ID'),
+      },
     },
     async ({ contactId }) => {
       const result = await client.crm.contacts.basicApi.getById(contactId, [
@@ -65,15 +69,17 @@ export function createHubSpotServer(credentials: { apiKey: string }): McpServer 
     }
   );
 
-  server.tool(
+  server.registerTool(
     'hubspot_create_contact',
-    'Create a new HubSpot contact.',
     {
-      email: z.string().email().describe('Contact email address'),
-      firstname: z.string().optional().describe('First name'),
-      lastname: z.string().optional().describe('Last name'),
-      company: z.string().optional().describe('Company name'),
-      phone: z.string().optional().describe('Phone number'),
+      description: 'Create a new HubSpot contact.',
+      inputSchema: {
+        email: z.email().describe('Contact email address'),
+        firstname: z.string().optional().describe('First name'),
+        lastname: z.string().optional().describe('Last name'),
+        company: z.string().optional().describe('Company name'),
+        phone: z.string().optional().describe('Phone number'),
+      },
     },
     async ({ email, firstname, lastname, company, phone }) => {
       const properties: Record<string, string> = { email };
@@ -86,12 +92,14 @@ export function createHubSpotServer(credentials: { apiKey: string }): McpServer 
     }
   );
 
-  server.tool(
+  server.registerTool(
     'hubspot_update_contact',
-    'Update properties on an existing HubSpot contact.',
     {
-      contactId: z.string().describe('HubSpot contact ID'),
-      properties: z.record(z.string()).describe('Key/value property pairs to update'),
+      description: 'Update properties on an existing HubSpot contact.',
+      inputSchema: {
+        contactId: z.string().describe('HubSpot contact ID'),
+        properties: z.record(z.string(), z.string()).describe('Key/value property pairs to update'),
+      },
     },
     async ({ contactId, properties }) => {
       const result = await client.crm.contacts.basicApi.update(contactId, { properties });
@@ -101,13 +109,15 @@ export function createHubSpotServer(credentials: { apiKey: string }): McpServer 
 
   // ─── Deals ────────────────────────────────────────────────────────────────
 
-  server.tool(
+  server.registerTool(
     'hubspot_list_deals',
-    'List HubSpot deals. Optionally search by name.',
     {
-      limit: z.number().int().min(1).max(100).default(20).describe('Max results'),
-      query: z.string().optional().describe('Search query for deal name'),
-      after: z.string().optional().describe('Pagination cursor'),
+      description: 'List HubSpot deals. Optionally search by name.',
+      inputSchema: {
+        limit: z.number().int().min(1).max(100).default(20).describe('Max results'),
+        query: z.string().optional().describe('Search query for deal name'),
+        after: z.string().optional().describe('Pagination cursor'),
+      },
     },
     async ({ limit, query, after }) => {
       if (query) {
@@ -130,11 +140,13 @@ export function createHubSpotServer(credentials: { apiKey: string }): McpServer 
     }
   );
 
-  server.tool(
+  server.registerTool(
     'hubspot_get_deal',
-    'Get a HubSpot deal by ID.',
     {
-      dealId: z.string().describe('HubSpot deal ID'),
+      description: 'Get a HubSpot deal by ID.',
+      inputSchema: {
+        dealId: z.string().describe('HubSpot deal ID'),
+      },
     },
     async ({ dealId }) => {
       const result = await client.crm.deals.basicApi.getById(dealId, [
@@ -144,15 +156,17 @@ export function createHubSpotServer(credentials: { apiKey: string }): McpServer 
     }
   );
 
-  server.tool(
+  server.registerTool(
     'hubspot_create_deal',
-    'Create a new HubSpot deal.',
     {
-      dealname: z.string().describe('Name of the deal'),
-      amount: z.string().optional().describe('Deal amount as string (e.g., "5000")'),
-      dealstage: z.string().optional().describe('Deal stage ID'),
-      pipeline: z.string().optional().describe('Pipeline ID'),
-      closedate: z.string().optional().describe('Expected close date (ISO 8601)'),
+      description: 'Create a new HubSpot deal.',
+      inputSchema: {
+        dealname: z.string().describe('Name of the deal'),
+        amount: z.string().optional().describe('Deal amount as string (e.g., "5000")'),
+        dealstage: z.string().optional().describe('Deal stage ID'),
+        pipeline: z.string().optional().describe('Pipeline ID'),
+        closedate: z.string().optional().describe('Expected close date (ISO 8601)'),
+      },
     },
     async ({ dealname, amount, dealstage, pipeline, closedate }) => {
       const properties: Record<string, string> = { dealname };
@@ -165,12 +179,14 @@ export function createHubSpotServer(credentials: { apiKey: string }): McpServer 
     }
   );
 
-  server.tool(
+  server.registerTool(
     'hubspot_update_deal',
-    'Update properties on an existing HubSpot deal.',
     {
-      dealId: z.string().describe('HubSpot deal ID'),
-      properties: z.record(z.string()).describe('Key/value property pairs to update'),
+      description: 'Update properties on an existing HubSpot deal.',
+      inputSchema: {
+        dealId: z.string().describe('HubSpot deal ID'),
+        properties: z.record(z.string(), z.string()).describe('Key/value property pairs to update'),
+      },
     },
     async ({ dealId, properties }) => {
       const result = await client.crm.deals.basicApi.update(dealId, { properties });
@@ -180,13 +196,15 @@ export function createHubSpotServer(credentials: { apiKey: string }): McpServer 
 
   // ─── Companies ────────────────────────────────────────────────────────────
 
-  server.tool(
+  server.registerTool(
     'hubspot_list_companies',
-    'List HubSpot companies. Optionally search by name.',
     {
-      limit: z.number().int().min(1).max(100).default(20).describe('Max results'),
-      query: z.string().optional().describe('Search query for company name or domain'),
-      after: z.string().optional().describe('Pagination cursor'),
+      description: 'List HubSpot companies. Optionally search by name.',
+      inputSchema: {
+        limit: z.number().int().min(1).max(100).default(20).describe('Max results'),
+        query: z.string().optional().describe('Search query for company name or domain'),
+        after: z.string().optional().describe('Pagination cursor'),
+      },
     },
     async ({ limit, query, after }) => {
       if (query) {
@@ -211,13 +229,15 @@ export function createHubSpotServer(credentials: { apiKey: string }): McpServer 
 
   // ─── Notes ────────────────────────────────────────────────────────────────
 
-  server.tool(
+  server.registerTool(
     'hubspot_create_note',
-    'Create an activity note in HubSpot, optionally associated with a contact or deal.',
     {
-      body: z.string().describe('Note content/body text'),
-      contactId: z.string().optional().describe('Associate note with this contact ID'),
-      dealId: z.string().optional().describe('Associate note with this deal ID'),
+      description: 'Create an activity note in HubSpot, optionally associated with a contact or deal.',
+      inputSchema: {
+        body: z.string().describe('Note content/body text'),
+        contactId: z.string().optional().describe('Associate note with this contact ID'),
+        dealId: z.string().optional().describe('Associate note with this deal ID'),
+      },
     },
     async ({ body, contactId, dealId }) => {
       const associations: Array<{ to: { id: string }; types: Array<{ associationCategory: 'HUBSPOT_DEFINED'; associationTypeId: number }>; }> = [];
