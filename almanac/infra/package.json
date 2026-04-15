@@ -1,0 +1,26 @@
+{
+  "name": "almanac-infra",
+  "version": "0.1.0",
+  "private": true,
+  "scripts": {
+    "build": "tsc",
+    "cdk": "npx cdk",
+    "synth": "npx cdk synth",
+    "deploy": "npx cdk deploy --require-approval never",
+    "diff": "npx cdk diff",
+    "destroy": "npx cdk destroy"
+  },
+  "dependencies": {
+    "aws-cdk-lib": "^2.250.0",
+    "constructs": "^10.6.0"
+  },
+  "devDependencies": {
+    "@types/node": "^24.12.2",
+    "aws-cdk": "^2.1118.0",
+    "ts-node": "^10.9.2",
+    "typescript": "^6.0.2"
+  },
+  "engines": {
+    "node": ">=24"
+  }
+}
