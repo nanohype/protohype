@@ -51,7 +51,7 @@ export class MemoryConstruct extends Construct {
     this.memoryFn = new nodejs.NodejsFunction(this, 'MemoryFn', {
       entry: path.join(__dirname, '../../lambda/memory/index.ts'),
       handler: 'handler',
-      runtime: lambda.Runtime.NODEJS_22_X,
+      runtime: lambda.Runtime.NODEJS_24_X,
       architecture: lambda.Architecture.ARM_64,
       // 90s covers embedding Lambda cold start (~30s model load) + actual
       // embedding call + DynamoDB writes with headroom. 30s was tight and

@@ -24,7 +24,7 @@ export class AuthorizerConstruct extends Construct {
     const authorizerFn = new nodejs.NodejsFunction(this, 'AuthorizerFn', {
       entry: path.join(__dirname, '../../lambda/authorizer/index.ts'),
       handler: 'handler',
-      runtime: lambda.Runtime.NODEJS_22_X,
+      runtime: lambda.Runtime.NODEJS_24_X,
       architecture: lambda.Architecture.ARM_64,
       timeout: cdk.Duration.seconds(5),
       memorySize: 128,

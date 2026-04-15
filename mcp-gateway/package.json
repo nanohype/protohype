@@ -3,6 +3,9 @@
   "version": "0.1.0",
   "description": "Unified API Gateway + Lambda CDK stack — MCP Switchboard, MCP Memory Server, Cost Dashboard",
   "private": true,
+  "engines": {
+    "node": ">=24"
+  },
   "scripts": {
     "build": "tsc",
     "watch": "tsc -w",
@@ -17,7 +20,7 @@
   "devDependencies": {
     "@types/aws-lambda": "^8.10.161",
     "@types/jest": "^30.0.0",
-    "@types/node": "^25.6.0",
+    "@types/node": "^24.12.2",
     "typescript-eslint": "^8.58.2",
     "aws-cdk": "^2.1118.0",
     "esbuild": "^0.28.0",

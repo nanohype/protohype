@@ -84,7 +84,7 @@ export class McpGatewayStack extends cdk.Stack {
 
     // Health check Lambda — no auth, returns 200 + stack version
     const healthFn = new lambda.Function(this, 'HealthFn', {
-      runtime: lambda.Runtime.NODEJS_22_X,
+      runtime: lambda.Runtime.NODEJS_24_X,
       architecture: lambda.Architecture.ARM_64,
       handler: 'index.handler',
       timeout: cdk.Duration.seconds(5),
