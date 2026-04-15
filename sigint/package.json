@@ -4,7 +4,7 @@
   "description": "Competitive intelligence radar — detect signals before they become headlines",
   "type": "module",
   "engines": {
-    "node": ">=22"
+    "node": ">=24"
   },
   "scripts": {
     "dev": "tsx watch src/index.ts",
@@ -28,7 +28,7 @@
   },
   "devDependencies": {
     "@eslint/js": "^10.0.1",
-    "@types/node": "^25.6.0",
+    "@types/node": "^24.12.2",
     "@types/pg": "^8.20.0",
     "eslint": "^10.2.0",
     "prettier": "^3.8.2",
