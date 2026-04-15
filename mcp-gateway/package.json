@@ -3,6 +3,9 @@
   "version": "0.1.0",
   "description": "Unified API Gateway + Lambda CDK stack — MCP Switchboard, MCP Memory Server, Cost Dashboard",
   "private": true,
+  "engines": {
+    "node": ">=24"
+  },
   "scripts": {
     "build": "tsc",
     "watch": "tsc -w",
@@ -16,24 +19,24 @@
   },
   "devDependencies": {
     "@types/aws-lambda": "^8.10.161",
-    "@types/jest": "^30",
-    "@types/node": "^22",
-    "typescript-eslint": "^8.58.1",
+    "@types/jest": "^30.0.0",
+    "@types/node": "^24.12.2",
+    "typescript-eslint": "^8.58.2",
     "aws-cdk": "^2.1118.0",
     "esbuild": "^0.28.0",
-    "eslint": "^10",
+    "eslint": "^10.2.0",
     "jest": "^30.3.0",
     "ts-jest": "^29.4.9",
     "ts-node": "^10.9.2",
-    "typescript": "^6"
+    "typescript": "^6.0.2"
   },
   "dependencies": {
-    "@aws-sdk/client-dynamodb": "^3.1029.0",
-    "@aws-sdk/client-lambda": "^3.1029.0",
-    "@aws-sdk/client-s3": "^3.1029.0",
-    "@aws-sdk/client-secrets-manager": "^3.1029.0",
-    "@aws-sdk/lib-dynamodb": "^3.1029.0",
-    "aws-cdk-lib": "^2.248.0",
+    "@aws-sdk/client-dynamodb": "^3.1030.0",
+    "@aws-sdk/client-lambda": "^3.1030.0",
+    "@aws-sdk/client-s3": "^3.1030.0",
+    "@aws-sdk/client-secrets-manager": "^3.1030.0",
+    "@aws-sdk/lib-dynamodb": "^3.1030.0",
+    "aws-cdk-lib": "^2.250.0",
     "constructs": "^10.6.0"
   },
   "jest": {

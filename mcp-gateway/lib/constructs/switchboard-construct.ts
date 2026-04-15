@@ -42,7 +42,7 @@ export class SwitchboardConstruct extends Construct {
     this.switchboardFn = new nodejs.NodejsFunction(this, 'SwitchboardFn', {
       entry: path.join(__dirname, '../../lambda/switchboard/index.ts'),
       handler: 'handler',
-      runtime: lambda.Runtime.NODEJS_22_X,
+      runtime: lambda.Runtime.NODEJS_24_X,
       architecture: lambda.Architecture.ARM_64,
       timeout: cdk.Duration.seconds(30),
       memorySize: 512,

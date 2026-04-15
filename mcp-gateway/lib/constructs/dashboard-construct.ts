@@ -36,7 +36,7 @@ export class DashboardConstruct extends Construct {
     const dashboardApiFn = new nodejs.NodejsFunction(this, 'DashboardApiFn', {
       entry: path.join(__dirname, '../../lambda/dashboard/index.ts'),
       handler: 'handler',
-      runtime: lambda.Runtime.NODEJS_22_X,
+      runtime: lambda.Runtime.NODEJS_24_X,
       architecture: lambda.Architecture.ARM_64,
       timeout: cdk.Duration.seconds(30),
       memorySize: 512,
