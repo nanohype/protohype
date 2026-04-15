@@ -9,7 +9,7 @@ export type SourceType = z.infer<typeof sourceTypeSchema>;
 const sourceSchema = z.object({
   id: z.string().optional(),
   competitor: z.string().min(1),
-  url: z.string().url(),
+  url: z.url(),
   type: sourceTypeSchema,
   selectors: z
     .object({
