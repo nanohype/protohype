@@ -7,12 +7,15 @@ import {
   type Tracer,
   type Meter,
 } from '@opentelemetry/api';
+import { logs, type Logger } from '@opentelemetry/api-logs';
 import { NodeSDK } from '@opentelemetry/sdk-node';
 import { getNodeAutoInstrumentations } from '@opentelemetry/auto-instrumentations-node';
 import { resourceFromAttributes } from '@opentelemetry/resources';
 import { OTLPTraceExporter } from '@opentelemetry/exporter-trace-otlp-http';
 import { OTLPMetricExporter } from '@opentelemetry/exporter-metrics-otlp-http';
+import { OTLPLogExporter } from '@opentelemetry/exporter-logs-otlp-http';
 import { PeriodicExportingMetricReader } from '@opentelemetry/sdk-metrics';
+import { BatchLogRecordProcessor } from '@opentelemetry/sdk-logs';
 import {
   ATTR_SERVICE_NAME,
   ATTR_SERVICE_NAMESPACE,
@@ -65,6 +68,11 @@ export function initTelemetry(opts: InitTelemetryOptions): void {
       exporter: new OTLPMetricExporter(),
       exportIntervalMillis: 30_000,
     }),
+    // Log records come from `observability.ts`'s dual-write path: every
+    // `logger.{info,warn,error}` line is both written to stdout (for
+    // the ECS awsLogs driver → CloudWatch) and emitted through the
+    // OTel logs API so the ADOT sidecar ships it to Grafana Loki.
+    logRecordProcessors: [new BatchLogRecordProcessor(new OTLPLogExporter())],
     instrumentations: [
       getNodeAutoInstrumentations({
         // File-system noise isn't useful and blows up span volume.
@@ -108,6 +116,10 @@ export function getTracer(name = 'chorus'): Tracer {
 
 export function getMeter(name = 'chorus'): Meter {
   return metrics.getMeter(name);
+}
+
+export function getLogger(name = 'chorus'): Logger {
+  return logs.getLogger(name);
 }
 
 export function isTelemetryActive(): boolean {
