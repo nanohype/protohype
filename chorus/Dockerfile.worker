@@ -1,0 +1,29 @@
+### Builder ###############################################################
+FROM node:24-alpine AS builder
+WORKDIR /app
+
+COPY package.json package-lock.json ./
+RUN npm ci --no-audit --no-fund
+
+COPY tsconfig.json ./
+COPY infra/tsconfig.json ./infra/tsconfig.json
+COPY src ./src
+COPY scripts ./scripts
+COPY evals ./evals
+RUN npm run build && \
+    find dist -type f \( -name '*.test.js' -o -name '*.test.d.ts' -o -name '*.test.js.map' -o -name '*.test.d.ts.map' \) -delete
+
+### Runtime ###############################################################
+FROM node:24-alpine AS runtime
+ENV NODE_ENV=production
+WORKDIR /app
+
+COPY package.json package-lock.json ./
+RUN npm ci --omit=dev --no-audit --no-fund && npm cache clean --force
+
+COPY --from=builder /app/dist ./dist
+
+RUN addgroup -S chorus && adduser -S chorus -G chorus && chown -R chorus:chorus /app
+USER chorus
+
+CMD ["node", "--import", "./dist/src/lib/telemetry-register.js", "dist/src/ingestion/worker-entrypoint.js"]

@@ -1,0 +1,12 @@
+{
+  "app": "npx tsx infra/bin/chorus.ts",
+  "watch": {
+    "include": ["infra/**/*"],
+    "exclude": ["**/node_modules/**", "**/dist/**", "**/cdk.out/**"]
+  },
+  "context": {
+    "@aws-cdk/core:enablePartitionLiterals": true,
+    "@aws-cdk/aws-iam:minimizePolicies": true,
+    "@aws-cdk/core:checkSecretUsage": true
+  }
+}
