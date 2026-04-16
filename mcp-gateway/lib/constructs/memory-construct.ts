@@ -77,7 +77,13 @@ export class MemoryConstruct extends Construct {
     }));
 
     const integration = new integrations.HttpLambdaIntegration('MemoryIntegration', this.memoryFn);
-    props.api.addRoutes({ path: '/memory', methods: [apigatewayv2.HttpMethod.POST], integration, authorizer: props.authorizer });
+    // ANY, not POST-only: the Anthropic MCP client opens a GET on the base
+    // path to establish the Streamable HTTP server→client SSE channel during
+    // initialize. A POST-only route 404s that GET and the managed-agents
+    // runtime then classifies the server as mcp_connection_failed_error,
+    // giving up on memory for the whole session. The switchboard route is
+    // ANY for the same reason.
+    props.api.addRoutes({ path: '/memory', methods: [apigatewayv2.HttpMethod.ANY], integration, authorizer: props.authorizer });
     props.api.addRoutes({ path: '/memory/{proxy+}', methods: [apigatewayv2.HttpMethod.ANY], integration, authorizer: props.authorizer });
 
     new cdk.CfnOutput(this, 'MemoryTableName', { value: this.memoryTable.tableName, description: 'DynamoDB table for agent memory', exportName: 'McpGateway-MemoryTableName' });
