@@ -1,0 +1,8 @@
+{
+  "entryPoints": ["src/types/index.ts", "src/lib/api.ts", "src/lib/auth.ts"],
+  "out": "docs",
+  "readme": "none",
+  "excludePrivate": true,
+  "excludeInternal": true,
+  "skipErrorChecking": true
+}

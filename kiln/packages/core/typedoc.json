@@ -1,0 +1,10 @@
+{
+  "entryPoints": ["src/index.ts"],
+  "out": "docs",
+  "tsconfig": "tsconfig.json",
+  "readme": "none",
+  "name": "@kiln/core",
+  "skipErrorChecking": true,
+  "excludeInternal": true,
+  "plugin": []
+}

@@ -1,0 +1,89 @@
+name: kiln-ci
+
+on:
+  pull_request:
+    paths:
+      - "kiln/**"
+  push:
+    branches:
+      - "feat/kiln"
+    paths:
+      - "kiln/**"
+
+defaults:
+  run:
+    working-directory: kiln
+
+jobs:
+  build:
+    name: Build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "24"
+          cache: "npm"
+          cache-dependency-path: kiln/package-lock.json
+      - run: npm ci
+      - run: npm run build
+      - run: npx tsc --noEmit --project tsconfig.test.json
+
+  lint:
+    name: Lint
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "24"
+          cache: "npm"
+          cache-dependency-path: kiln/package-lock.json
+      - run: npm ci
+      - run: npm run lint
+
+  test:
+    name: Test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "24"
+          cache: "npm"
+          cache-dependency-path: kiln/package-lock.json
+      - run: npm ci
+      - run: npm test
+      - name: Upload coverage
+        uses: actions/upload-artifact@v4
+        with:
+          name: kiln-coverage
+          path: kiln/coverage/
+
+  security-scan:
+    name: Dependency Security Scan
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "24"
+          cache: "npm"
+          cache-dependency-path: kiln/package-lock.json
+      - run: npm ci
+      - name: npm audit
+        run: npm audit --audit-level=high
+
+  docs:
+    name: Docs
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "24"
+          cache: "npm"
+          cache-dependency-path: kiln/package-lock.json
+      - run: npm ci
+      - run: npm run build
+      - run: npm run docs

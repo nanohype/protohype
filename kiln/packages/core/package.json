@@ -1,0 +1,40 @@
+{
+  "name": "@kiln/core",
+  "version": "0.1.0",
+  "description": "Kiln core — dependency upgrade automation engine",
+  "private": true,
+  "type": "module",
+  "engines": {
+    "node": ">=22.0.0"
+  },
+  "main": "./dist/index.js",
+  "exports": {
+    ".": "./dist/index.js"
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "lint": "eslint src --ext .ts",
+    "test": "vitest run --coverage",
+    "test:watch": "vitest",
+    "docs": "typedoc --out docs src/index.ts"
+  },
+  "dependencies": {
+    "@aws-sdk/client-bedrock-runtime": "^3.1030.0",
+    "@aws-sdk/client-dynamodb": "^3.1030.0",
+    "@aws-sdk/lib-dynamodb": "^3.1030.0",
+    "@octokit/auth-app": "^8.2.0",
+    "@octokit/rest": "^22.0.1",
+    "semver": "^7.7.4",
+    "undici": "^8.1.0"
+  },
+  "devDependencies": {
+    "@types/node": "^22.0.0",
+    "@types/semver": "^7.5.8",
+    "@vitest/coverage-v8": "^4.1.4",
+    "aws-sdk-client-mock": "^4.1.0",
+    "msw": "^2.13.3",
+    "typedoc": "^0.28.0",
+    "typescript": "^6.0.2",
+    "vitest": "^4.1.4"
+  }
+}
