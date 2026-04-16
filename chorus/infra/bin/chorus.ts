@@ -20,6 +20,7 @@ new ChorusStack(app, 'ChorusStack', {
   apiImageUri: app.node.tryGetContext('apiImageUri') as string | undefined,
   workerImageUri: app.node.tryGetContext('workerImageUri') as string | undefined,
   digestImageUri: app.node.tryGetContext('digestImageUri') as string | undefined,
+  auditConsumerImageUri: app.node.tryGetContext('auditConsumerImageUri') as string | undefined,
 
   /** Domain the API will be reachable on (CNAME or alias to the ALB). */
   apiDomainName: app.node.tryGetContext('apiDomainName') as string | undefined,
@@ -45,4 +46,13 @@ new ChorusStack(app, 'ChorusStack', {
    */
   linearTeamId: app.node.tryGetContext('linearTeamId') as string | undefined,
   slackFeedbackChannels: app.node.tryGetContext('slackFeedbackChannels') as string | undefined,
+
+  /**
+   * Grafana Cloud OTLP config. The endpoint is non-secret (region
+   * identifier); the Authorization header lives in the
+   * `chorus/grafana-cloud/otlp` Secrets Manager secret.
+   */
+  grafanaOtlpEndpoint: app.node.tryGetContext('grafanaOtlpEndpoint') as string | undefined,
+  otelTraceSamplerRatio: app.node.tryGetContext('otelTraceSamplerRatio') as string | undefined,
+  deploymentEnv: app.node.tryGetContext('deploymentEnv') as string | undefined,
 });

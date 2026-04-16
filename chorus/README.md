@@ -171,6 +171,7 @@ placeholder values. Populate them out-of-band before traffic flows
 | `chorus/slack/signing-secret` | `api/ingest-routes.ts` (Slack Events request verification) |
 | `chorus/linear/api-key` | `ingestion/linear-sync.ts` (Linear GraphQL API key) |
 | `chorus/ingest/api-key` | `api/ingest-routes.ts` (Bearer key for `/api/ingest` webhook) |
+| `chorus/grafana-cloud/otlp` | ADOT collector sidecar — full `Basic <base64(instance:token)>` OTLP HTTP Authorization header |
 
 Set each:
 

@@ -10,6 +10,7 @@ import * as rds from 'aws-cdk-lib/aws-rds';
 import * as scheduler from 'aws-cdk-lib/aws-scheduler';
 import * as secretsmanager from 'aws-cdk-lib/aws-secretsmanager';
 import * as sqs from 'aws-cdk-lib/aws-sqs';
+import { addAdotSidecar } from './adot-sidecar.js';
 
 /**
  * The chorus production stack. Resources, in dependency order:
@@ -37,6 +38,7 @@ export interface ChorusStackProps extends cdk.StackProps {
   apiImageUri?: string | undefined;
   workerImageUri?: string | undefined;
   digestImageUri?: string | undefined;
+  auditConsumerImageUri?: string | undefined;
   apiDomainName?: string | undefined;
   workosIssuer?: string | undefined;
   workosClientId?: string | undefined;
@@ -47,6 +49,17 @@ export interface ChorusStackProps extends cdk.StackProps {
   /** Slack channel → squad mapping (comma-separated
    *  `channelId=squadId` pairs) for the /slack/events ingestion route. */
   slackFeedbackChannels?: string | undefined;
+  /** Grafana Cloud OTLP gateway, e.g.
+   *  `https://otlp-gateway-prod-us-east-0.grafana.net/otlp`. The ADOT
+   *  sidecar exports traces/metrics/logs here; auth comes from the
+   *  `chorus/grafana-cloud/otlp` secret. */
+  grafanaOtlpEndpoint?: string | undefined;
+  /** Sampling ratio for outbound traces (parent-based trace-id-ratio).
+   *  Defaults to 0.1 (10%). */
+  otelTraceSamplerRatio?: string | undefined;
+  /** Deployment environment label applied to every resource
+   *  (`deployment.environment=prod`). Defaults to `prod`. */
+  deploymentEnv?: string | undefined;
 }
 
 export class ChorusStack extends cdk.Stack {
@@ -100,6 +113,24 @@ export class ChorusStack extends cdk.Stack {
       encryptionMasterKey: kmsKey,
     });
 
+    // ─── SQS audit queue ──────────────────────────────────────────
+    // The api/worker/digest tasks enqueue audit entries to this queue
+    // when AUDIT_QUEUE_URL is set; the audit-consumer service drains
+    // the queue and performs the INSERTs. Unprocessable messages land
+    // in the DLQ after 3 receives.
+    const auditDlq = new sqs.Queue(this, 'ChorusAuditDlq', {
+      retentionPeriod: cdk.Duration.days(14),
+      encryption: sqs.QueueEncryption.KMS,
+      encryptionMasterKey: kmsKey,
+    });
+    const auditQueue = new sqs.Queue(this, 'ChorusAuditQueue', {
+      retentionPeriod: cdk.Duration.days(4),
+      visibilityTimeout: cdk.Duration.seconds(60),
+      encryption: sqs.QueueEncryption.KMS,
+      encryptionMasterKey: kmsKey,
+      deadLetterQueue: { queue: auditDlq, maxReceiveCount: 3 },
+    });
+
     // ─── Secrets ──────────────────────────────────────────────────
     // DB password: generated; rotated externally if needed.
     const dbSecret = new secretsmanager.Secret(this, 'DbCredentials', {
@@ -131,6 +162,16 @@ export class ChorusStack extends cdk.Stack {
           encryptionKey: kmsKey,
         }),
     );
+
+    // Grafana Cloud OTLP auth header. Stored as the full
+    // `Basic <base64(instance:token)>` string so the ADOT collector
+    // can substitute it straight into the Authorization header.
+    const grafanaAuthSecret = new secretsmanager.Secret(this, 'Secret-chorus-grafana-cloud-otlp', {
+      secretName: 'chorus/grafana-cloud/otlp',
+      description:
+        'chorus credential: chorus/grafana-cloud/otlp — full `Basic <base64>` Authorization header for OTLP HTTP',
+      encryptionKey: kmsKey,
+    });
 
     // ─── RDS Postgres 16 + pgvector ───────────────────────────────
     const dbSecurityGroup = new ec2.SecurityGroup(this, 'DbSg', { vpc, allowAllOutbound: false });
@@ -193,15 +234,34 @@ export class ChorusStack extends cdk.Stack {
     );
 
     // Secrets Manager read for runtime tokens
-    for (const s of [dbSecret, ...placeholderSecrets]) s.grantRead(taskRole);
+    for (const s of [dbSecret, ...placeholderSecrets, grafanaAuthSecret]) s.grantRead(taskRole);
     kmsKey.grantDecrypt(taskRole);
 
-    // SQS write for DLQ
+    // SQS: write for the DLQ; write for the audit queue (enqueueing
+    // from api/worker/digest); full receive/delete on the audit queue
+    // is granted separately to the audit-consumer task only.
     dlq.grantSendMessages(taskRole);
+    auditQueue.grantSendMessages(taskRole);
+
+    const deploymentEnv = props.deploymentEnv ?? 'prod';
+    const otelSamplerRatio = props.otelTraceSamplerRatio ?? '0.1';
+    const grafanaOtlpEndpoint =
+      props.grafanaOtlpEndpoint ?? 'https://otlp-gateway-prod-us-east-0.grafana.net/otlp';
+
+    const telemetryEnv: Record<string, string> = {
+      OTEL_EXPORTER_OTLP_ENDPOINT: 'http://localhost:4318',
+      OTEL_EXPORTER_OTLP_PROTOCOL: 'http/protobuf',
+      OTEL_TRACES_SAMPLER: 'parentbased_traceidratio',
+      OTEL_TRACES_SAMPLER_ARG: otelSamplerRatio,
+      OTEL_LOG_LEVEL: 'error',
+      DEPLOYMENT_ENV: deploymentEnv,
+    };
 
     const sharedEnv: Record<string, string> = {
       AWS_REGION: this.region,
       DLQ_URL: dlq.queueUrl,
+      AUDIT_QUEUE_URL: auditQueue.queueUrl,
+      ...telemetryEnv,
       ...(props.workosIssuer ? { WORKOS_ISSUER: props.workosIssuer } : {}),
       ...(props.workosClientId ? { WORKOS_CLIENT_ID: props.workosClientId } : {}),
       ...(props.linearTeamId ? { LINEAR_TEAM_ID: props.linearTeamId } : {}),
@@ -229,10 +289,21 @@ export class ChorusStack extends cdk.Stack {
     });
     apiTask.addContainer('api', {
       image: containerImage(props.apiImageUri, 'api'),
-      environment: { ...sharedEnv, ...apiEnv, PORT: '3000' },
+      environment: {
+        ...sharedEnv,
+        ...apiEnv,
+        PORT: '3000',
+        OTEL_SERVICE_NAME: 'chorus-api',
+      },
       secrets: { DB_PASSWORD: dbEnv },
       logging: ecs.LogDrivers.awsLogs({ streamPrefix: 'api', logGroup: apiLogs }),
       portMappings: [{ containerPort: 3000 }],
+    });
+    addAdotSidecar({
+      taskDefinition: apiTask,
+      logGroup: apiLogs,
+      grafanaAuthSecret,
+      grafanaOtlpEndpoint,
     });
 
     const apiService = new ecs.FargateService(this, 'ApiService', {
@@ -267,9 +338,15 @@ export class ChorusStack extends cdk.Stack {
     });
     workerTask.addContainer('worker', {
       image: containerImage(props.workerImageUri, 'worker'),
-      environment: sharedEnv,
+      environment: { ...sharedEnv, OTEL_SERVICE_NAME: 'chorus-worker' },
       secrets: { DB_PASSWORD: dbEnv },
       logging: ecs.LogDrivers.awsLogs({ streamPrefix: 'worker', logGroup: workerLogs }),
+    });
+    addAdotSidecar({
+      taskDefinition: workerTask,
+      logGroup: workerLogs,
+      grafanaAuthSecret,
+      grafanaOtlpEndpoint,
     });
     const workerService = new ecs.FargateService(this, 'WorkerService', {
       cluster,
@@ -293,9 +370,20 @@ export class ChorusStack extends cdk.Stack {
     });
     digestTask.addContainer('digest', {
       image: containerImage(props.digestImageUri, 'digest'),
-      environment: { ...sharedEnv, ...digestEnv, WORKER_ONESHOT: 'true' },
+      environment: {
+        ...sharedEnv,
+        ...digestEnv,
+        WORKER_ONESHOT: 'true',
+        OTEL_SERVICE_NAME: 'chorus-digest',
+      },
       secrets: { DB_PASSWORD: dbEnv },
       logging: ecs.LogDrivers.awsLogs({ streamPrefix: 'digest', logGroup: digestLogs }),
+    });
+    addAdotSidecar({
+      taskDefinition: digestTask,
+      logGroup: digestLogs,
+      grafanaAuthSecret,
+      grafanaOtlpEndpoint,
     });
 
     // EventBridge Scheduler invokes the ECS RunTask once a week.
@@ -342,12 +430,64 @@ export class ChorusStack extends cdk.Stack {
       },
     });
 
+    // ─── chorus-audit-consumer ────────────────────────────────────
+    // Long-running service draining the audit queue. Uses a distinct
+    // task role so the queue's receive/delete permission is scoped to
+    // this service only — the api/worker/digest tasks can enqueue but
+    // never dequeue, which keeps audit delivery one-directional.
+    const auditTaskRole = new iam.Role(this, 'AuditConsumerTaskRole', {
+      assumedBy: new iam.ServicePrincipal('ecs-tasks.amazonaws.com'),
+    });
+    kmsKey.grantDecrypt(auditTaskRole);
+    dbSecret.grantRead(auditTaskRole);
+    grafanaAuthSecret.grantRead(auditTaskRole);
+    auditQueue.grantConsumeMessages(auditTaskRole);
+
+    const auditLogs = new logs.LogGroup(this, 'AuditConsumerLogs', {
+      retention: logs.RetentionDays.ONE_MONTH,
+      removalPolicy: cdk.RemovalPolicy.RETAIN,
+    });
+    const auditTask = new ecs.FargateTaskDefinition(this, 'AuditConsumerTask', {
+      cpu: 256,
+      memoryLimitMiB: 512,
+      taskRole: auditTaskRole,
+    });
+    auditTask.addContainer('audit-consumer', {
+      image: containerImage(props.auditConsumerImageUri, 'audit-consumer'),
+      environment: {
+        AWS_REGION: this.region,
+        AUDIT_QUEUE_URL: auditQueue.queueUrl,
+        ...telemetryEnv,
+        OTEL_SERVICE_NAME: 'chorus-audit-consumer',
+      },
+      secrets: { DB_PASSWORD: dbEnv },
+      logging: ecs.LogDrivers.awsLogs({ streamPrefix: 'audit-consumer', logGroup: auditLogs }),
+    });
+    addAdotSidecar({
+      taskDefinition: auditTask,
+      logGroup: auditLogs,
+      grafanaAuthSecret,
+      grafanaOtlpEndpoint,
+    });
+    const auditService = new ecs.FargateService(this, 'AuditConsumerService', {
+      cluster,
+      taskDefinition: auditTask,
+      desiredCount: 1,
+      vpcSubnets: { subnetType: ec2.SubnetType.PRIVATE_WITH_EGRESS },
+      assignPublicIp: false,
+    });
+    auditService.connections.allowTo(db, ec2.Port.tcp(5432), 'audit-consumer → RDS');
+    db.connections.allowFrom(auditService, ec2.Port.tcp(5432));
+
     // ─── Outputs ──────────────────────────────────────────────────
     new cdk.CfnOutput(this, 'AlbDnsName', { value: alb.loadBalancerDnsName });
     new cdk.CfnOutput(this, 'DbEndpoint', { value: db.dbInstanceEndpointAddress });
     new cdk.CfnOutput(this, 'DbPort', { value: db.dbInstanceEndpointPort });
     new cdk.CfnOutput(this, 'DlqUrl', { value: dlq.queueUrl });
+    new cdk.CfnOutput(this, 'AuditQueueUrl', { value: auditQueue.queueUrl });
+    new cdk.CfnOutput(this, 'AuditDlqUrl', { value: auditDlq.queueUrl });
     new cdk.CfnOutput(this, 'DbSecretArn', { value: dbSecret.secretArn });
+    new cdk.CfnOutput(this, 'GrafanaAuthSecretArn', { value: grafanaAuthSecret.secretArn });
     new cdk.CfnOutput(this, 'KmsKeyArn', { value: kmsKey.keyArn });
     if (props.apiDomainName) {
       new cdk.CfnOutput(this, 'ApiDomain', { value: props.apiDomainName });

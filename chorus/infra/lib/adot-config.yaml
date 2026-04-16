@@ -1,0 +1,66 @@
+# AWS Distro for OpenTelemetry collector config. Mounted into the
+# ADOT sidecar container via the AOT_CONFIG_CONTENT env var (the ADOT
+# image reads config from that env when set). One OTLP HTTP receiver
+# on localhost:4318 for the app container in the same task, one
+# OTLP HTTP exporter to Grafana Cloud. No AWS-native exporters — all
+# traces/metrics/logs land in Grafana Tempo / Mimir / Loki.
+#
+# The Grafana Cloud instance id + API token live in Secrets Manager at
+# chorus/grafana-cloud/otlp; ECS injects the pre-encoded "Basic <…>"
+# string as the GRAFANA_OTLP_AUTH env var so the exporter substitutes
+# it into the Authorization header at start.
+receivers:
+  otlp:
+    protocols:
+      http:
+        endpoint: 0.0.0.0:4318
+      grpc:
+        endpoint: 0.0.0.0:4317
+
+processors:
+  memory_limiter:
+    check_interval: 1s
+    limit_percentage: 80
+    spike_limit_percentage: 25
+  resourcedetection/ecs:
+    detectors: [env, ecs]
+    override: false
+    timeout: 2s
+  batch:
+    send_batch_size: 512
+    send_batch_max_size: 1024
+    timeout: 5s
+
+exporters:
+  otlphttp/grafana:
+    endpoint: ${env:GRAFANA_OTLP_ENDPOINT}
+    headers:
+      Authorization: ${env:GRAFANA_OTLP_AUTH}
+    compression: gzip
+    sending_queue:
+      enabled: true
+      num_consumers: 4
+      queue_size: 1000
+
+extensions:
+  health_check:
+    endpoint: 0.0.0.0:13133
+
+service:
+  extensions: [health_check]
+  telemetry:
+    logs:
+      level: info
+  pipelines:
+    traces:
+      receivers: [otlp]
+      processors: [memory_limiter, resourcedetection/ecs, batch]
+      exporters: [otlphttp/grafana]
+    metrics:
+      receivers: [otlp]
+      processors: [memory_limiter, resourcedetection/ecs, batch]
+      exporters: [otlphttp/grafana]
+    logs:
+      receivers: [otlp]
+      processors: [memory_limiter, resourcedetection/ecs, batch]
+      exporters: [otlphttp/grafana]

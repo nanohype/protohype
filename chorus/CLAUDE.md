@@ -46,6 +46,11 @@ Every stage writes an `audit_log` row keyed by correlation ID; the audit write i
 | `src/lib/db.ts` | `getDbPool()` singleton — `pg.Pool` with bounded size, idle/connection timeouts. |
 | `src/lib/http.ts` | `createExternalClient(config)` — `fetch` wrapper with 10 s timeout hard-cap, jittered exponential backoff on 429/503/504, max 3 retries. |
 | `src/lib/observability.ts` | Structured JSON logger (stdout), correlation-id middleware, `withCorrelation` tracing helper. |
+| `src/lib/telemetry.ts` | OpenTelemetry SDK bootstrap. Exports OTLP HTTP to `localhost:4318` (ADOT sidecar in Fargate → Grafana Cloud). No-op when `OTEL_SDK_DISABLED=true`. |
+| `src/lib/telemetry-register.ts` | Loaded via `node --import` in every container so auto-instrumentations install before user code. |
+| `src/lib/telemetry-hooks.ts` | `withSpan(name, attrs, fn)` plus typed metric recorders: `recordPipelineStage`, `recordIngestItem`, `recordProposalDecision`, `setBreakerState`. |
+| `src/audit/audit-consumer.ts` | SQS consumer that drains the audit queue (when `AUDIT_QUEUE_URL` is set) and performs the INSERTs off the request path. Runs as a dedicated Fargate service. |
+| `infra/lib/adot-sidecar.ts` | CDK helper that attaches an ADOT collector sidecar to every Fargate task. Config in `infra/lib/adot-config.yaml`. |
 | `src/lib/directory.ts` | `createDirectoryClient` — paginated WorkOS Directory Sync `/directory_users` iterator, filtered by group id. |
 | `src/lib/queue.ts` | `getDlqClient()` — SQS sender; falls back to stderr if `DLQ_URL` unset. |
 | `src/lib/secrets.ts` | `getSecretString(name)` — Secrets Manager with 5-min in-memory cache. |
@@ -93,6 +98,7 @@ Secrets (WorkOS API key, Slack bot token) are fetched from AWS Secrets Manager b
 - Correlation ID threaded through every stage (`correlationId: string`) and included in audit rows.
 - Every outbound HTTP call goes through `createExternalClient`. No ad-hoc `fetch` in pipeline code.
 - Every env var read fails closed if the value is missing. No placeholder URL defaults.
+- OpenTelemetry is the shared observability surface. Every container is launched with `node --import ./dist/src/lib/telemetry-register.js` so auto-instrumentations (http, pg, express) patch before user code. Hot paths (pipeline stages, external HTTP, SDK calls) carry manual spans with `chorus.correlation_id`, `chorus.stage`, and `chorus.breaker.state` attributes. Metrics + traces + logs flow to the ADOT collector sidecar on `localhost:4318` and from there to Grafana Cloud.
 - The `RedactedText` branded type is a compile-time marker. The only legitimate producers are `createPiiRedactor` (brands values after running regex + Comprehend) and `rehydrateRedacted` (brands values read back out of the `feedback_items.redacted_text` column). Tests use `asRedactedForTests`.
 
 ## Testing
@@ -110,5 +116,6 @@ Secrets (WorkOS API key, Slack bot token) are fetched from AWS Secrets Manager b
 | `express` | middleware types + future REST API host |
 | `jose` | WorkOS AuthKit RS256 JWT verification |
 | `pg` | Postgres client, pgvector through the `vector` type |
+| `@opentelemetry/sdk-node` + `auto-instrumentations-node` + OTLP HTTP exporters | OpenTelemetry emission; ADOT sidecar ships to Grafana Cloud |
 
 Lint/test stack: `eslint`, `@typescript-eslint/*`, `prettier`, `vitest`, `@vitest/coverage-v8`.

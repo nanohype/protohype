@@ -70,6 +70,7 @@ describe('ChorusStack', () => {
       'chorus/slack/signing-secret',
       'chorus/linear/api-key',
       'chorus/ingest/api-key',
+      'chorus/grafana-cloud/otlp',
     ];
     for (const name of expected) {
       t.hasResourceProperties('AWS::SecretsManager::Secret', { Name: name });
@@ -88,9 +89,37 @@ describe('ChorusStack', () => {
     });
   });
 
-  it('creates three Fargate task definitions: api, worker, digest', () => {
+  it('creates four Fargate task definitions: api, worker, digest, audit-consumer', () => {
     const t = synth();
-    t.resourceCountIs('AWS::ECS::TaskDefinition', 3);
+    t.resourceCountIs('AWS::ECS::TaskDefinition', 4);
+  });
+
+  it('attaches an ADOT collector sidecar to every Fargate task', () => {
+    const t = synth();
+    const tds = t.findResources('AWS::ECS::TaskDefinition');
+    for (const [name, td] of Object.entries(tds)) {
+      const defs = (td as { Properties: { ContainerDefinitions: Array<{ Name: string }> } })
+        .Properties.ContainerDefinitions;
+      const hasCollector = defs.some((c) => c.Name === 'otel-collector');
+      expect(hasCollector, `${name} missing otel-collector`).toBe(true);
+    }
+  });
+
+  it('provisions an SQS audit queue with a dedicated DLQ and an audit-consumer Fargate service', () => {
+    const t = synth();
+    const queues = t.findResources('AWS::SQS::Queue');
+    // 4 queues now: DLQ, audit queue, audit DLQ (redrive target), and
+    // the audit queue has a RedrivePolicy pointing to the audit DLQ.
+    expect(Object.keys(queues).length).toBe(3);
+    const hasRedrive = Object.values(queues).some((q) => {
+      const props = (q as { Properties: { RedrivePolicy?: unknown } }).Properties;
+      return props.RedrivePolicy !== undefined;
+    });
+    expect(hasRedrive).toBe(true);
+    // 3 long-running Fargate services: api, worker, audit-consumer.
+    // digest runs as EventBridge RunTask, not a long-lived service.
+    const services = t.findResources('AWS::ECS::Service');
+    expect(Object.keys(services).length).toBe(3);
   });
 
   it('schedules the digest at Mondays 09:00 in America/Los_Angeles', () => {
@@ -107,7 +136,7 @@ describe('ChorusStack', () => {
     t.resourceCountIs('AWS::EC2::VPCEndpoint', 8); // includes the S3 gateway
   });
 
-  it('exposes ALB DNS, RDS endpoint, DLQ URL, and KMS ARN as outputs', () => {
+  it('exposes ALB DNS, RDS endpoint, DLQ URL, audit queue URL, and KMS ARN as outputs', () => {
     const t = synth();
     const outs = t.findOutputs('*');
     const keys = Object.keys(outs);
@@ -117,7 +146,10 @@ describe('ChorusStack', () => {
         'DbEndpoint',
         'DbPort',
         'DlqUrl',
+        'AuditQueueUrl',
+        'AuditDlqUrl',
         'DbSecretArn',
+        'GrafanaAuthSecretArn',
         'KmsKeyArn',
       ]),
     );

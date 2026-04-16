@@ -26,4 +26,4 @@ COPY --from=builder /app/dist ./dist
 RUN addgroup -S chorus && adduser -S chorus -G chorus && chown -R chorus:chorus /app
 USER chorus
 
-CMD ["node", "dist/src/digest/digest-job.js"]
+CMD ["node", "--import", "./dist/src/lib/telemetry-register.js", "dist/src/digest/digest-job.js"]

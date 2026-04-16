@@ -6,6 +6,12 @@ import { findMatch, type MatchProposal, type MatcherDeps } from '../matching/mat
 import { redactPii, type RedactionResult } from '../matching/pii-redactor.js';
 import { embedSingle } from '../matching/embedder.js';
 import type { RedactedText } from '../matching/redacted-text.js';
+import {
+  recordIngestItem,
+  recordPipelineStage,
+  recordProposalDecision,
+  withSpan,
+} from '../lib/telemetry-hooks.js';
 import type { RawFeedbackItem } from './types.js';
 
 /**
@@ -46,62 +52,100 @@ export async function processFeedbackItem(
   const match = deps.match ?? findMatch;
   const audit = deps.audit ?? auditLog;
 
-  return withCorrelation(correlationId, 'PIPELINE', async () => {
-    try {
-      await audit({
-        correlationId,
-        stage: 'INGEST',
-        detail: { source: item.source, sourceItemId: item.sourceItemId },
-      });
+  recordIngestItem(item.source);
 
-      const redaction = await redact(correlationId, item.verbatimText);
-      const embedding = await embed(correlationId, redaction.redactedText);
+  return withSpan(
+    'chorus.pipeline',
+    {
+      'chorus.correlation_id': correlationId,
+      'chorus.source': item.source,
+      'chorus.source_item_id': item.sourceItemId,
+    },
+    async (pipelineSpan) =>
+      withCorrelation(correlationId, 'PIPELINE', async () => {
+        try {
+          await runStage('INGEST', correlationId, async () => {
+            await audit({
+              correlationId,
+              stage: 'INGEST',
+              detail: { source: item.source, sourceItemId: item.sourceItemId },
+            });
+          });
 
-      const feedbackItemId = await persistFeedbackItem(
-        deps.db,
-        correlationId,
-        item,
-        redaction.redactedText,
-        embedding,
-      );
+          const redaction = await runStage('REDACT', correlationId, () =>
+            redact(correlationId, item.verbatimText),
+          );
+          const embedding = await runStage('EMBED', correlationId, () =>
+            embed(correlationId, redaction.redactedText),
+          );
 
-      const proposal = await match(
-        correlationId,
-        feedbackItemId,
-        embedding,
-        redaction.redactedText,
-        deps.matcherDeps,
-      );
+          const feedbackItemId = await runStage('PERSIST', correlationId, () =>
+            persistFeedbackItem(deps.db, correlationId, item, redaction.redactedText, embedding),
+          );
+          pipelineSpan.setAttribute('chorus.feedback_item_id', feedbackItemId);
 
-      await persistProposal(deps.db, feedbackItemId, proposal);
+          const proposal = await runStage('MATCH', correlationId, () =>
+            match(
+              correlationId,
+              feedbackItemId,
+              embedding,
+              redaction.redactedText,
+              deps.matcherDeps,
+            ),
+          );
+          recordProposalDecision(proposal.type);
+          pipelineSpan.setAttribute('chorus.proposal.type', proposal.type);
+          if (proposal.similarityScore !== undefined) {
+            pipelineSpan.setAttribute('chorus.proposal.similarity', proposal.similarityScore);
+          }
 
-      await audit({
-        correlationId,
-        stage: 'PROPOSE',
-        feedbackItemId,
-        backlogEntryId: proposal.backlogEntryId,
-        detail: { type: proposal.type, similarityScore: proposal.similarityScore },
-      });
+          await runStage('PROPOSE', correlationId, async () => {
+            await persistProposal(deps.db, feedbackItemId, proposal);
+            await audit({
+              correlationId,
+              stage: 'PROPOSE',
+              feedbackItemId,
+              backlogEntryId: proposal.backlogEntryId,
+              detail: { type: proposal.type, similarityScore: proposal.similarityScore },
+            });
+          });
 
-      return { correlationId, feedbackItemId, proposal };
-    } catch (err) {
-      logger.error('pipeline failed', {
-        correlationId,
-        source: item.source,
-        sourceItemId: item.sourceItemId,
-        error: String(err),
-      });
-      await deps.dlq.sendMessage({
-        correlationId,
-        stage: 'PIPELINE',
-        source: item.source,
-        sourceItemId: item.sourceItemId,
-        error: String(err),
-        timestamp: new Date().toISOString(),
-      });
-      throw err;
-    }
-  });
+          return { correlationId, feedbackItemId, proposal };
+        } catch (err) {
+          logger.error('pipeline failed', {
+            correlationId,
+            source: item.source,
+            sourceItemId: item.sourceItemId,
+            error: String(err),
+          });
+          await deps.dlq.sendMessage({
+            correlationId,
+            stage: 'PIPELINE',
+            source: item.source,
+            sourceItemId: item.sourceItemId,
+            error: String(err),
+            timestamp: new Date().toISOString(),
+          });
+          throw err;
+        }
+      }),
+  );
+}
+
+async function runStage<T>(stage: string, correlationId: string, fn: () => Promise<T>): Promise<T> {
+  const start = Date.now();
+  try {
+    const out = await withSpan(
+      `chorus.pipeline.${stage.toLowerCase()}`,
+      { 'chorus.stage': stage, 'chorus.correlation_id': correlationId },
+      async () => fn(),
+    );
+    recordPipelineStage(stage, Date.now() - start, true);
+    return out;
+  } catch (err) {
+    recordPipelineStage(stage, Date.now() - start, false);
+    throw err;
+  }
 }
 
 async function persistFeedbackItem(

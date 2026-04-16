@@ -5,7 +5,17 @@
  * Bedrock outage can't walk the caller through the full retry budget
  * on every request. Tests inject `fetchImpl`, `sleepImpl`, and `now`
  * so retry and breaker transitions run without wall-clock delay.
+ *
+ * Every request is wrapped in an OTel client span with the outbound
+ * host, status code, retry attempt count, and breaker state attached
+ * — the collector exports to Grafana Cloud as an HTTP client span.
+ * The per-host breaker state also surfaces as an observable gauge so
+ * dashboards can show when upstream is open-circuited.
  */
+
+import { SpanKind, SpanStatusCode, type Attributes } from '@opentelemetry/api';
+import { getTracer } from './telemetry.js';
+import { setBreakerState } from './telemetry-hooks.js';
 
 export interface ExternalClientConfig {
   baseUrl: string;
@@ -72,27 +82,35 @@ export function createExternalClient(config: ExternalClientConfig): ExternalClie
   const sleepImpl = config.sleepImpl ?? defaultSleep;
   const now = config.now ?? Date.now;
 
+  const host = safeHost(config.baseUrl);
   let state: BreakerState = 'CLOSED';
   let consecutiveFailures = 0;
   let openedAt = 0;
+  setBreakerState(host, state);
+
+  function transition(next: BreakerState): void {
+    if (state === next) return;
+    state = next;
+    setBreakerState(host, state);
+  }
 
   function onSuccess(): void {
     consecutiveFailures = 0;
-    state = 'CLOSED';
+    transition('CLOSED');
   }
 
   function onFailure(): void {
     consecutiveFailures++;
     if (consecutiveFailures >= failureThreshold) {
-      state = 'OPEN';
       openedAt = now();
+      transition('OPEN');
     }
   }
 
   function gate(): void {
     if (state === 'OPEN') {
       if (now() - openedAt >= cooldownMs) {
-        state = 'HALF_OPEN';
+        transition('HALF_OPEN');
         return;
       }
       throw new CircuitOpenError(config.baseUrl);
@@ -102,57 +120,100 @@ export function createExternalClient(config: ExternalClientConfig): ExternalClie
   return {
     breakerState: () => state,
     async request<T>(opts: RequestOptions): Promise<T> {
-      gate();
-
-      let url = `${config.baseUrl}${opts.path}`;
-      if (opts.params) {
-        const entries: [string, string][] = Object.entries(opts.params)
-          .filter((e): e is [string, string | number] => e[1] !== undefined)
-          .map(([k, v]) => [k, String(v)]);
-        const qs = new URLSearchParams(entries).toString();
-        if (qs) url += `?${qs}`;
-      }
-      const headers: Record<string, string> = {
-        'Content-Type': 'application/json',
-        ...config.headers,
+      const method = opts.method ?? 'GET';
+      const tracer = getTracer('chorus.http');
+      const baseAttrs: Attributes = {
+        'http.request.method': method,
+        'server.address': host,
+        'chorus.host': host,
       };
-      if (opts.correlationId) headers['X-Chorus-Correlation-Id'] = opts.correlationId;
-      let attempt = 0;
-      while (attempt <= maxRetries) {
-        const controller = new AbortController();
-        const timer = setTimeout(() => controller.abort(), timeoutMs);
-        try {
-          const init: RequestInit = {
-            method: opts.method ?? 'GET',
-            headers,
-            signal: controller.signal,
-          };
-          if (opts.body !== undefined) init.body = JSON.stringify(opts.body);
-          const response = await fetchImpl(url, init);
-          if (!response.ok) {
-            if (RETRY_STATUS.has(response.status) && attempt < maxRetries) {
-              attempt++;
-              await sleepImpl(jitter(retryDelayBaseMs * Math.pow(2, attempt - 1)));
-              continue;
+      return tracer.startActiveSpan(
+        `HTTP ${method} ${host}`,
+        { kind: SpanKind.CLIENT, attributes: baseAttrs },
+        async (span) => {
+          try {
+            gate();
+
+            let url = `${config.baseUrl}${opts.path}`;
+            if (opts.params) {
+              const entries: [string, string][] = Object.entries(opts.params)
+                .filter((e): e is [string, string | number] => e[1] !== undefined)
+                .map(([k, v]) => [k, String(v)]);
+              const qs = new URLSearchParams(entries).toString();
+              if (qs) url += `?${qs}`;
             }
-            throw new Error(`HTTP ${response.status} from ${url}`);
+            span.setAttribute('url.full', url);
+
+            const headers: Record<string, string> = {
+              'Content-Type': 'application/json',
+              ...config.headers,
+            };
+            if (opts.correlationId) {
+              headers['X-Chorus-Correlation-Id'] = opts.correlationId;
+              span.setAttribute('chorus.correlation_id', opts.correlationId);
+            }
+            let attempt = 0;
+            while (attempt <= maxRetries) {
+              const controller = new AbortController();
+              const timer = setTimeout(() => controller.abort(), timeoutMs);
+              try {
+                const init: RequestInit = {
+                  method,
+                  headers,
+                  signal: controller.signal,
+                };
+                if (opts.body !== undefined) init.body = JSON.stringify(opts.body);
+                const response = await fetchImpl(url, init);
+                span.setAttribute('http.response.status_code', response.status);
+                if (!response.ok) {
+                  if (RETRY_STATUS.has(response.status) && attempt < maxRetries) {
+                    attempt++;
+                    span.setAttribute('chorus.retry.attempt', attempt);
+                    await sleepImpl(jitter(retryDelayBaseMs * Math.pow(2, attempt - 1)));
+                    continue;
+                  }
+                  throw new Error(`HTTP ${response.status} from ${url}`);
+                }
+                onSuccess();
+                span.setAttribute('chorus.breaker.state', state);
+                span.setStatus({ code: SpanStatusCode.OK });
+                return (await response.json()) as T;
+              } catch (err) {
+                if (err instanceof Error && err.name === 'AbortError' && attempt < maxRetries) {
+                  attempt++;
+                  span.setAttribute('chorus.retry.attempt', attempt);
+                  await sleepImpl(jitter(retryDelayBaseMs * Math.pow(2, attempt - 1)));
+                  continue;
+                }
+                onFailure();
+                throw err;
+              } finally {
+                clearTimeout(timer);
+              }
+            }
+            onFailure();
+            throw new Error(`Max retries exceeded for ${url}`);
+          } catch (err) {
+            span.setAttribute('chorus.breaker.state', state);
+            span.recordException(err as Error);
+            span.setStatus({
+              code: SpanStatusCode.ERROR,
+              message: err instanceof Error ? err.message : String(err),
+            });
+            throw err;
+          } finally {
+            span.end();
           }
-          onSuccess();
-          return (await response.json()) as T;
-        } catch (err) {
-          if (err instanceof Error && err.name === 'AbortError' && attempt < maxRetries) {
-            attempt++;
-            await sleepImpl(jitter(retryDelayBaseMs * Math.pow(2, attempt - 1)));
-            continue;
-          }
-          onFailure();
-          throw err;
-        } finally {
-          clearTimeout(timer);
-        }
-      }
-      onFailure();
-      throw new Error(`Max retries exceeded for ${url}`);
+        },
+      );
     },
   };
+}
+
+function safeHost(baseUrl: string): string {
+  try {
+    return new URL(baseUrl).host;
+  } catch {
+    return baseUrl;
+  }
 }

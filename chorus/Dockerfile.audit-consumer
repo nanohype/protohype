@@ -16,7 +16,6 @@ RUN npm run build && \
 ### Runtime ###############################################################
 FROM node:24-alpine AS runtime
 ENV NODE_ENV=production
-ENV PORT=3000
 WORKDIR /app
 
 COPY package.json package-lock.json ./
@@ -27,8 +26,4 @@ COPY --from=builder /app/dist ./dist
 RUN addgroup -S chorus && adduser -S chorus -G chorus && chown -R chorus:chorus /app
 USER chorus
 
-EXPOSE 3000
-HEALTHCHECK --interval=30s --timeout=5s --start-period=20s --retries=3 \
-  CMD wget -qO- http://127.0.0.1:3000/healthz || exit 1
-
-CMD ["node", "--import", "./dist/src/lib/telemetry-register.js", "dist/src/api/server.js"]
+CMD ["node", "--import", "./dist/src/lib/telemetry-register.js", "dist/src/audit/audit-consumer.js"]

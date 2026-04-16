@@ -5,7 +5,7 @@ STACK_NAME ?= ChorusStack
 # Image tag — defaults to the short git SHA so each deploy is uniquely
 # addressable. Override with `make deploy VERSION=v0.1.0` for releases.
 VERSION  ?= $(shell git rev-parse --short HEAD 2>/dev/null || echo dev)
-SERVICES := chorus-api chorus-worker chorus-digest
+SERVICES := chorus-api chorus-worker chorus-digest chorus-audit-consumer
 
 # AWS account is resolved on demand via STS so the Makefile doesn't
 # leak any account ID into the repo.
@@ -49,6 +49,7 @@ help:
 	@echo "  make ui-build       next build in frontend/"
 	@echo "  make ui-dev         next dev -p 3001 in frontend/"
 	@echo "  make ui-ci          ui-typecheck + ui-lint + ui-format-check + ui-build"
+	@echo "  make otel-local     run the OTel collector-contrib locally on :4318"
 	@echo "  make clean          remove dist/, node_modules/, coverage/"
 
 install:
@@ -96,14 +97,15 @@ cdk-diff:
 	npm run cdk:diff
 
 cdk-deploy:
-	@if [ -z "$$API_IMAGE_URI" ] || [ -z "$$WORKER_IMAGE_URI" ] || [ -z "$$DIGEST_IMAGE_URI" ]; then \
-		echo "API_IMAGE_URI, WORKER_IMAGE_URI, DIGEST_IMAGE_URI all required (build & push images first, or use 'make deploy')"; \
+	@if [ -z "$$API_IMAGE_URI" ] || [ -z "$$WORKER_IMAGE_URI" ] || [ -z "$$DIGEST_IMAGE_URI" ] || [ -z "$$AUDIT_CONSUMER_IMAGE_URI" ]; then \
+		echo "API_IMAGE_URI, WORKER_IMAGE_URI, DIGEST_IMAGE_URI, AUDIT_CONSUMER_IMAGE_URI all required (build & push images first, or use 'make deploy')"; \
 		exit 1; \
 	fi
 	npm run cdk:deploy -- \
 		-c apiImageUri=$$API_IMAGE_URI \
 		-c workerImageUri=$$WORKER_IMAGE_URI \
-		-c digestImageUri=$$DIGEST_IMAGE_URI
+		-c digestImageUri=$$DIGEST_IMAGE_URI \
+		-c auditConsumerImageUri=$$AUDIT_CONSUMER_IMAGE_URI
 
 # ─── ECR + container build/push ────────────────────────────────────
 # Tokens are NEVER baked into images. The container reads them from
@@ -124,9 +126,10 @@ ecr-create:
 	done
 
 docker-build:
-	docker build --platform linux/amd64 -f Dockerfile.api    -t chorus-api:$(VERSION)    .
-	docker build --platform linux/amd64 -f Dockerfile.worker -t chorus-worker:$(VERSION) .
-	docker build --platform linux/amd64 -f Dockerfile.digest -t chorus-digest:$(VERSION) .
+	docker build --platform linux/amd64 -f Dockerfile.api            -t chorus-api:$(VERSION)            .
+	docker build --platform linux/amd64 -f Dockerfile.worker         -t chorus-worker:$(VERSION)         .
+	docker build --platform linux/amd64 -f Dockerfile.digest         -t chorus-digest:$(VERSION)         .
+	docker build --platform linux/amd64 -f Dockerfile.audit-consumer -t chorus-audit-consumer:$(VERSION) .
 
 ecr-push: ecr-login ecr-create
 	@for svc in $(SERVICES); do \
@@ -140,7 +143,8 @@ deploy: docker-build ecr-push
 	@$(MAKE) cdk-deploy \
 		API_IMAGE_URI=$(repo)/chorus-api:$(VERSION) \
 		WORKER_IMAGE_URI=$(repo)/chorus-worker:$(VERSION) \
-		DIGEST_IMAGE_URI=$(repo)/chorus-digest:$(VERSION)
+		DIGEST_IMAGE_URI=$(repo)/chorus-digest:$(VERSION) \
+		AUDIT_CONSUMER_IMAGE_URI=$(repo)/chorus-audit-consumer:$(VERSION)
 
 ui-install:
 	cd frontend && npm ci
@@ -162,6 +166,16 @@ ui-dev:
 
 ui-ci: ui-typecheck ui-lint ui-format-check ui-build
 	@echo "ui-ci ✓"
+
+# ─── OTel collector for local dev ─────────────────────────────────
+# Runs the upstream OTel collector-contrib in the foreground on
+# :4318 with a debug exporter so you can watch spans/metrics emitted
+# by `npm run dev`. Ctrl-C stops it. Requires docker.
+otel-local:
+	docker run --rm -it -p 4317:4317 -p 4318:4318 \
+		-v $(PWD)/infra/lib/adot-config-dev.yaml:/etc/otelcol/config.yaml:ro \
+		otel/opentelemetry-collector-contrib:latest \
+		--config /etc/otelcol/config.yaml
 
 clean:
 	rm -rf dist node_modules coverage cdk.out frontend/node_modules frontend/.next
