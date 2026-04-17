@@ -16,10 +16,15 @@
  * on one query doesn't spare the next.
  */
 import { BedrockRuntimeClient, InvokeModelCommand } from "@aws-sdk/client-bedrock-runtime";
+import { z } from "zod";
 import type { RetrievalHit } from "../connectors/types.js";
 import type { RetrievalBackend } from "./backends/types.js";
 import { logger } from "../logger.js";
 import { CircuitOpenError, createCircuitBreaker } from "../util/circuit-breaker.js";
+
+const EmbeddingResponseSchema = z.object({
+  embedding: z.array(z.number()).min(1),
+});
 
 const TOP_K = 20;
 const FINAL_K = 10;
@@ -69,8 +74,16 @@ export function createRetriever(deps: RetrieverConfig): Retriever {
         { abortSignal: AbortSignal.timeout(EMBED_TIMEOUT_MS) },
       );
       timing("EmbeddingLatency", Date.now() - start);
-      const payload = JSON.parse(new TextDecoder().decode(response.body));
-      return payload.embedding as number[];
+      const raw: unknown = JSON.parse(new TextDecoder().decode(response.body));
+      const parsed = EmbeddingResponseSchema.safeParse(raw);
+      if (!parsed.success) {
+        logger.error(
+          { modelId: deps.embeddingModelId, err: parsed.error.issues },
+          "Bedrock embedding response did not match expected shape",
+        );
+        throw new Error("Bedrock embedding response invalid");
+      }
+      return parsed.data.embedding;
     },
 
     async hybridSearch(queryText, queryEmbedding) {

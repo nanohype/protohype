@@ -25,7 +25,7 @@
  * and production passes global `fetch`. No `vi.mock("axios")` or
  * `vi.mock` of the source SDKs anywhere.
  */
-import type { RetrievalHit } from "./types.js";
+import { SUPPORTED_SOURCES, type RetrievalHit, type Source } from "./types.js";
 import { AclProbeError, getVerifier } from "./registry.js";
 import { logger } from "../logger.js";
 import {
@@ -39,7 +39,7 @@ import "./notion.js";
 import "./confluence.js";
 import "./drive.js";
 
-export type GetAccessToken = (source: RetrievalHit["source"]) => Promise<string | null>;
+export type GetAccessToken = (source: Source) => Promise<string | null>;
 
 export interface AclGuardConfig {
   fetchImpl: typeof fetch;
@@ -52,15 +52,14 @@ export interface AclGuard {
   verify(hits: RetrievalHit[], getAccessToken: GetAccessToken): Promise<RetrievalHit[]>;
 }
 
-const SOURCES: ReadonlyArray<RetrievalHit["source"]> = ["notion", "confluence", "drive"];
 const FAILURE_THRESHOLD = 5;
 const WINDOW_MS = 60_000;
 const HALF_OPEN_AFTER_MS = 30_000;
 
 export function createAclGuard(deps: AclGuardConfig): AclGuard {
   const onCounter = deps.onCounter ?? (() => {});
-  const breakers = new Map<RetrievalHit["source"], CircuitBreaker>();
-  for (const source of SOURCES) {
+  const breakers = new Map<Source, CircuitBreaker>();
+  for (const source of SUPPORTED_SOURCES) {
     breakers.set(
       source,
       createCircuitBreaker({
@@ -87,7 +86,7 @@ async function verifyOne(
   hit: RetrievalHit,
   getAccessToken: GetAccessToken,
   fetchImpl: typeof fetch,
-  breakers: Map<RetrievalHit["source"], CircuitBreaker>,
+  breakers: Map<Source, CircuitBreaker>,
 ): Promise<RetrievalHit> {
   const verifier = getVerifier(hit.source);
   if (!verifier) {
@@ -100,9 +99,9 @@ async function verifyOne(
   const token = await getAccessToken(hit.source);
   if (!token) return { ...hit, accessVerified: false, wasRedacted: true };
 
-  // Breakers are seeded for every known source at guard construction
-  // (see `SOURCES` above), so this Map.get() is effectively infallible;
-  // the non-null assertion keeps the type tight without a dead else-branch.
+  // Breakers are seeded for every SUPPORTED_SOURCES entry at guard
+  // construction, so this Map.get() is effectively infallible; the
+  // non-null assertion keeps the type tight without a dead else-branch.
   const breaker = breakers.get(hit.source)!;
   try {
     await breaker.exec(() => verifier.probe(hit, token, fetchImpl));

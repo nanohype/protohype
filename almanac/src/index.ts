@@ -46,7 +46,16 @@ const ddb = new DynamoDBClient({
   region: config.AWS_REGION,
   requestHandler: new NodeHttpHandler({ requestTimeout: 5000, connectionTimeout: 1000 }),
 });
-const bedrock = new BedrockRuntimeClient({ region: config.BEDROCK_REGION });
+const bedrock = new BedrockRuntimeClient({
+  region: config.BEDROCK_REGION,
+  // SDK-layer timeouts backstop the application-level AbortSignal.timeout in
+  // retriever/generator. A stalled TCP connection that never errors would
+  // otherwise hold the Bolt handler slot until Node's default socket timeout.
+  requestHandler: new NodeHttpHandler({
+    requestTimeout: 35_000,
+    connectionTimeout: 2_000,
+  }),
+});
 
 // Retrieval backend — scheme-dispatched from a single URL.
 //   explicit RETRIEVAL_BACKEND_URL takes precedence
@@ -150,6 +159,8 @@ const queryHandler = createQueryHandler({
   sourceToProvider: SOURCE_TO_PROVIDER,
   workspaceId: "almanac",
   appBaseUrl: config.APP_BASE_URL,
+  userPerHour: config.RATE_LIMIT_USER_PER_HOUR,
+  workspacePerHour: config.RATE_LIMIT_WORKSPACE_PER_HOUR,
   onCounter: counter,
   onTiming: timing,
 });

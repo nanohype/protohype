@@ -37,6 +37,18 @@ jobs:
         run: npm install --prefer-offline --no-audit --no-fund
         working-directory: almanac/packages/oauth
 
+      - name: Lint (almanac-oauth)
+        run: npm run lint
+        working-directory: almanac/packages/oauth
+
+      - name: Typecheck (almanac-oauth)
+        run: npm run typecheck
+        working-directory: almanac/packages/oauth
+
+      - name: Test (almanac-oauth)
+        run: npm test
+        working-directory: almanac/packages/oauth
+
       - name: Build almanac-oauth
         run: npm run build
         working-directory: almanac/packages/oauth

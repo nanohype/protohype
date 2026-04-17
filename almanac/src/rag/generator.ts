@@ -9,10 +9,15 @@
  * `aws-sdk-client-mock` and check the outgoing InvokeModel shape.
  */
 import { BedrockRuntimeClient, InvokeModelCommand } from "@aws-sdk/client-bedrock-runtime";
+import { z } from "zod";
 import type { RetrievalHit, SourceCitation } from "../connectors/types.js";
 import { logger } from "../logger.js";
 
 const LLM_TIMEOUT_MS = 30000;
+
+const CompletionResponseSchema = z.object({
+  content: z.array(z.object({ text: z.string() })).min(1, "Bedrock returned empty content array"),
+});
 
 const SYSTEM_PROMPT = `You are Almanac, an internal knowledge assistant. Answer employee questions using ONLY the provided source documents.
 
@@ -98,8 +103,9 @@ export function createGenerator(deps: GeneratorConfig): Generator {
           { abortSignal: AbortSignal.timeout(LLM_TIMEOUT_MS) },
         );
         timing("LLMLatency", now() - llmStart);
-        const result = JSON.parse(new TextDecoder().decode(response.body));
-        const answerText: string = result.content[0].text;
+        const raw: unknown = JSON.parse(new TextDecoder().decode(response.body));
+        const parsed = CompletionResponseSchema.parse(raw);
+        const answerText: string = parsed.content[0].text;
         const seen = new Set<string>();
         const citations: SourceCitation[] = accessibleHits
           .filter((hit) => {

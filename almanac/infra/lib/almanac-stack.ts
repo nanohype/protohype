@@ -36,6 +36,9 @@ import * as s3 from "aws-cdk-lib/aws-s3";
 import * as kms from "aws-cdk-lib/aws-kms";
 import * as secretsmanager from "aws-cdk-lib/aws-secretsmanager";
 import * as cloudwatch from "aws-cdk-lib/aws-cloudwatch";
+import * as cw_actions from "aws-cdk-lib/aws-cloudwatch-actions";
+import * as sns from "aws-cdk-lib/aws-sns";
+import * as sns_subs from "aws-cdk-lib/aws-sns-subscriptions";
 import * as logs from "aws-cdk-lib/aws-logs";
 import * as iam from "aws-cdk-lib/aws-iam";
 import * as acm from "aws-cdk-lib/aws-certificatemanager";
@@ -69,6 +72,14 @@ export interface AlmanacStackProps extends cdk.StackProps {
    * the cert (set `certArn`) or run HTTP-only.
    */
   hostedZoneId?: string;
+  /**
+   * Optional email address subscribed to the alarm SNS topic. When set,
+   * CDK adds an `EmailSubscription` on create — the operator still has
+   * to click the confirmation link AWS sends. Leave unset to wire
+   * subscriptions out-of-band (PagerDuty, Slack webhook, etc.) off the
+   * exported topic ARN.
+   */
+  alarmEmail?: string;
 }
 
 export class AlmanacStack extends cdk.Stack {
@@ -205,8 +216,22 @@ export class AlmanacStack extends cdk.Stack {
       deadLetterQueue: { queue: auditDlq, maxReceiveCount: 3 },
     });
 
+    // SNS topic for all alarm notifications. Every alarm below is wired to
+    // this topic so operators get paged via the same mechanism regardless of
+    // signal (audit-loss vs latency vs LLM-error). Optional email subscription
+    // via `alarmEmail` prop; PagerDuty/Slack integrations subscribe to the
+    // exported `AlarmTopicArn` output out-of-band.
+    const alarmTopic = new sns.Topic(this, "AlarmTopic", {
+      topicName: `almanac-alarms-${props.environment}`,
+      displayName: `Almanac ${props.environment} alarms`,
+    });
+    if (props.alarmEmail) {
+      alarmTopic.addSubscription(new sns_subs.EmailSubscription(props.alarmEmail));
+    }
+    const alarmAction = new cw_actions.SnsAction(alarmTopic);
+
     // CloudWatch alarm: DLQ depth > 0 (compliance requirement)
-    new cloudwatch.Alarm(this, "AuditDlqDepthAlarm", {
+    const auditDlqAlarm = new cloudwatch.Alarm(this, "AuditDlqDepthAlarm", {
       metric: auditDlq.metricApproximateNumberOfMessagesVisible(),
       threshold: 1,
       evaluationPeriods: 1,
@@ -214,6 +239,7 @@ export class AlmanacStack extends cdk.Stack {
       alarmDescription: "Almanac audit DLQ has messages - audit log delivery failing",
       treatMissingData: cloudwatch.TreatMissingData.NOT_BREACHING,
     });
+    auditDlqAlarm.addAlarmAction(alarmAction);
 
     // App-level SLO alarms against metrics emitted by src/metrics.ts.
     // Environment dimension lets staging and production alarms stay separate.
@@ -227,7 +253,7 @@ export class AlmanacStack extends cdk.Stack {
         period: cdk.Duration.minutes(5),
       });
 
-    new cloudwatch.Alarm(this, "QueryP95LatencyAlarm", {
+    const queryP95Alarm = new cloudwatch.Alarm(this, "QueryP95LatencyAlarm", {
       metric: appMetric("QueryLatency", "p95"),
       threshold: 5000, // 5s
       evaluationPeriods: 3,
@@ -235,8 +261,9 @@ export class AlmanacStack extends cdk.Stack {
       alarmDescription: "Almanac query p95 latency > 5s for 15 minutes",
       treatMissingData: cloudwatch.TreatMissingData.NOT_BREACHING,
     });
+    queryP95Alarm.addAlarmAction(alarmAction);
 
-    new cloudwatch.Alarm(this, "LLMErrorAlarm", {
+    const llmErrorAlarm = new cloudwatch.Alarm(this, "LLMErrorAlarm", {
       metric: appMetric("LLMError", "Sum"),
       threshold: 5,
       evaluationPeriods: 1,
@@ -244,10 +271,11 @@ export class AlmanacStack extends cdk.Stack {
       alarmDescription: "Almanac Bedrock LLM errors >= 5 in 5 minutes",
       treatMissingData: cloudwatch.TreatMissingData.NOT_BREACHING,
     });
+    llmErrorAlarm.addAlarmAction(alarmAction);
 
     // AuditTotalLoss fires only when BOTH the primary queue AND the DLQ
     // SendMessage failed — a genuinely-lost compliance event. Page immediately.
-    new cloudwatch.Alarm(this, "AuditTotalLossAlarm", {
+    const auditTotalLossAlarm = new cloudwatch.Alarm(this, "AuditTotalLossAlarm", {
       metric: appMetric("AuditTotalLoss", "Sum"),
       threshold: 1,
       evaluationPeriods: 1,
@@ -256,6 +284,7 @@ export class AlmanacStack extends cdk.Stack {
         "Almanac lost audit event(s) — primary SQS and DLQ both failed. Compliance-critical.",
       treatMissingData: cloudwatch.TreatMissingData.NOT_BREACHING,
     });
+    auditTotalLossAlarm.addAlarmAction(alarmAction);
 
     // Lambda: audit consumer (SQS -> DDB -> S3)
     const auditLogRole = new iam.Role(this, "AuditLambdaRole", {
@@ -286,20 +315,55 @@ export class AlmanacStack extends cdk.Stack {
       // CDK on one major, tracks LTS-to-LTS migrations.
       runtime: lambda.Runtime.NODEJS_24_X,
       handler: "index.handler",
+      // SECURITY: every field interpolated into the S3 key or DDB item
+      // comes from `JSON.parse(record.body)` — untrusted input from the SQS
+      // queue writer. A crafted `userId: "../../.."` (or a `timestamp`
+      // without the expected `YYYY-MM-DDT...` shape) would escape the
+      // `audit/{userId}/{date}/` prefix and write to an attacker-chosen key
+      // within the bucket. We validate every interpolated field against a
+      // tight regex before constructing any key and drop the record on
+      // mismatch. Drops land in the Lambda CloudWatch log group for ops
+      // review.
       code: lambda.Code.fromInline(`
         const { DynamoDBClient, PutItemCommand } = require("@aws-sdk/client-dynamodb");
         const { S3Client, PutObjectCommand } = require("@aws-sdk/client-s3");
         const ddb = new DynamoDBClient({});
         const s3 = new S3Client({});
+        // Path-safe character classes for S3 key segments:
+        //   userId    — opaque IdP user ID (Okta sub / WorkOS externalUserId),
+        //               alphanumerics + ._- only, 1..128 chars
+        //   date      — strict YYYY-MM-DD from the ISO-8601 timestamp prefix
+        //   queryHash — hex digest; letters/digits only
+        const RE_USER_ID = /^[A-Za-z0-9._-]{1,128}$/;
+        const RE_ISO_DATE = /^\\d{4}-\\d{2}-\\d{2}$/;
+        const RE_QUERY_HASH = /^[A-Za-z0-9]{1,128}$/;
         exports.handler = async (event) => {
           for (const record of event.Records) {
-            const ev = JSON.parse(record.body);
+            let ev;
+            try {
+              ev = JSON.parse(record.body);
+            } catch (e) {
+              console.error("audit-consumer: malformed JSON, dropping", { messageId: record.messageId });
+              continue;
+            }
+            const datePart = typeof ev.timestamp === "string" ? ev.timestamp.split("T")[0] : "";
+            if (!RE_USER_ID.test(ev.userId) ||
+                !RE_ISO_DATE.test(datePart) ||
+                !RE_QUERY_HASH.test(ev.queryHash)) {
+              console.error("audit-consumer: invalid field shape, dropping", {
+                messageId: record.messageId,
+                userIdOk: RE_USER_ID.test(ev.userId),
+                dateOk: RE_ISO_DATE.test(datePart),
+                queryHashOk: RE_QUERY_HASH.test(ev.queryHash),
+              });
+              continue;
+            }
             const ttl = Math.floor(Date.now() / 1000) + (90 * 24 * 3600);
             await ddb.send(new PutItemCommand({
               TableName: process.env.AUDIT_TABLE,
               Item: { userId: { S: ev.userId }, timestamp: { S: ev.timestamp }, eventData: { S: JSON.stringify(ev) }, ttl: { N: String(ttl) } }
             }));
-            const key = 'audit/' + ev.userId + '/' + ev.timestamp.split('T')[0] + '/' + ev.queryHash + '.json';
+            const key = 'audit/' + ev.userId + '/' + datePart + '/' + ev.queryHash + '.json';
             await s3.send(new PutObjectCommand({ Bucket: process.env.AUDIT_BUCKET, Key: key, Body: JSON.stringify(ev), ContentType: 'application/json' }));
           }
         };
@@ -861,6 +925,11 @@ export class AlmanacStack extends cdk.Stack {
     });
     new cdk.CfnOutput(this, "ServiceName", { value: service.serviceName });
     new cdk.CfnOutput(this, "ClusterName", { value: cluster.clusterName });
+    new cdk.CfnOutput(this, "AlarmTopicArn", {
+      value: alarmTopic.topicArn,
+      description:
+        "SNS topic wired to every CloudWatch alarm. Subscribe PagerDuty/Slack/email here.",
+    });
   }
 }
 

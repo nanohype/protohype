@@ -1,6 +1,15 @@
+/**
+ * Canonical list of supported source systems. Every module that needs to
+ * iterate sources (ACL guard, query handler, disconnect command) imports
+ * this tuple rather than redeclaring it locally — adding a fourth source
+ * is a one-line change here + a new verifier module.
+ */
+export const SUPPORTED_SOURCES = ["notion", "confluence", "drive"] as const;
+export type Source = (typeof SUPPORTED_SOURCES)[number];
+
 export interface RetrievalHit {
   docId: string;
-  source: "notion" | "confluence" | "drive";
+  source: Source;
   title: string;
   url: string;
   chunkText: string;
@@ -16,13 +25,13 @@ export interface ConnectorSearchResult {
 }
 
 export interface ConnectorError {
-  source: "notion" | "confluence" | "drive";
+  source: Source;
   message: string;
   partial: boolean;
 }
 
 export interface SourceCitation {
-  source: "notion" | "confluence" | "drive";
+  source: Source;
   docId: string;
   title: string;
   url: string;

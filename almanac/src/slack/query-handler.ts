@@ -2,6 +2,7 @@ import { randomUUID } from "node:crypto";
 import { App, AllMiddlewareArgs, SayFn, SlackEventMiddlewareArgs } from "@slack/bolt";
 import { requestContext } from "../context.js";
 import type { AclGuard } from "../connectors/acl-guard.js";
+import { SUPPORTED_SOURCES, type Source } from "../connectors/types.js";
 import type { OAuthRouter, TokenStorage } from "almanac-oauth";
 import type { IdentityResolver } from "../identity/types.js";
 import type { RateLimiter } from "../ratelimit/redis-limiter.js";
@@ -18,9 +19,7 @@ import { buildQueryAuditEvent } from "../audit/audit-logger.js";
 import { logger } from "../logger.js";
 
 type BoltClient = AllMiddlewareArgs["client"];
-type SourceKey = "notion" | "confluence" | "drive";
 
-const SOURCES: readonly SourceKey[] = ["notion", "confluence", "drive"] as const;
 const EMAIL_CACHE_TTL_MS = 5 * 60 * 1000;
 
 export interface QueryHandlerConfig {
@@ -33,9 +32,11 @@ export interface QueryHandlerConfig {
   oauth: OAuthRouter;
   oauthStorage: TokenStorage;
   signOAuthStartUrl: (userId: string, provider: string) => string;
-  sourceToProvider: Record<SourceKey, string>;
+  sourceToProvider: Record<Source, string>;
   workspaceId: string;
   appBaseUrl: string;
+  userPerHour: number;
+  workspacePerHour: number;
   onCounter?: (metric: string, value?: number, dims?: Record<string, string>) => void;
   onTiming?: (metric: string, ms: number) => void;
   now?: () => number;
@@ -82,9 +83,14 @@ export function createQueryHandler(deps: QueryHandlerConfig): QueryHandler {
 
     const rateResult = await deps.rateLimiter.check(userId, deps.workspaceId);
     if (!rateResult.allowed) {
-      counter("RateLimitHit", 1, { limit_type: rateResult.limitType ?? "user" });
+      const limitType = rateResult.limitType ?? "user";
+      counter("RateLimitHit", 1, { limit_type: limitType });
       await say({
-        ...formatRateLimitMessage(rateResult.limitType ?? "user", rateResult.resetAt),
+        ...formatRateLimitMessage(limitType, rateResult.resetAt, {
+          userPerHour: deps.userPerHour,
+          workspacePerHour: deps.workspacePerHour,
+          now,
+        }),
         thread_ts: ts,
       });
       return;
@@ -114,7 +120,7 @@ export function createQueryHandler(deps: QueryHandlerConfig): QueryHandler {
     }
 
     const presence = await Promise.all(
-      SOURCES.map(async (source) => {
+      SUPPORTED_SOURCES.map(async (source) => {
         const grant = await deps.oauthStorage.get(
           identity.externalUserId,
           deps.sourceToProvider[source],
@@ -124,9 +130,9 @@ export function createQueryHandler(deps: QueryHandlerConfig): QueryHandler {
     );
     const missingTokenSources = presence.filter((p) => !p.present).map((p) => p.source);
 
-    if (missingTokenSources.length === SOURCES.length) {
+    if (missingTokenSources.length === SUPPORTED_SOURCES.length) {
       const authLinks = Object.fromEntries(
-        SOURCES.map((source) => {
+        SUPPORTED_SOURCES.map((source) => {
           const provider = deps.sourceToProvider[source];
           const signed = deps.signOAuthStartUrl(identity.externalUserId, provider);
           return [
@@ -134,7 +140,7 @@ export function createQueryHandler(deps: QueryHandlerConfig): QueryHandler {
             `${deps.appBaseUrl}/oauth/${provider}/start?t=${encodeURIComponent(signed)}`,
           ];
         }),
-      ) as Record<SourceKey, string>;
+      ) as Record<Source, string>;
       await say({
         ...formatOAuthPrompt(missingTokenSources, authLinks),
         thread_ts: ts,

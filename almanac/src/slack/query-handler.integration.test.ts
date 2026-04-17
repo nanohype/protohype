@@ -185,6 +185,8 @@ function buildDeps(overrides: {
     sourceToProvider: SOURCE_TO_PROVIDER,
     workspaceId: "W",
     appBaseUrl: "https://almanac.test",
+    userPerHour: 20,
+    workspacePerHour: 500,
     now: () => NOW,
   });
   return { handler, storage, oauth };
