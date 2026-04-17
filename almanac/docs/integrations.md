@@ -14,7 +14,7 @@ Every third-party integration is behind a typed port (`createXxx(deps)` factory)
 | **API surface** | `GET https://api.workos.com/directory_users?directory={id}&limit=100` (paginated) with `Authorization: Bearer {apiKey}`. Client-filters the response by email — the endpoint doesn't support an `email=` query param (returns 422). |
 | **Env vars** | `WORKOS_API_KEY`, `WORKOS_DIRECTORY_ID` — both in Secrets Manager `almanac/{env}/app-secrets` |
 | **Setup** | [dashboard.workos.com](https://dashboard.workos.com) → sign up (gmail OK) → **Directory Sync** → connect your workforce directory (Google Workspace, Azure AD, Okta, manual CSV, …) → copy the `directory_01…` ID → **API Keys** → create a Production key (`sk_…`) |
-| **Verify** | `npm test -- --grep workos-resolver` (8 tests: Bearer auth shape, directory filter, primary-email selection, cache hit/miss, null fallover, custom baseUrl, multi-page `after` cursor pagination) |
+| **Verify** | `npm test -- --grep workos-resolver` (Bearer auth shape, directory filter, primary-email selection, cache hit/miss, null fallover, custom baseUrl, multi-page `after` cursor pagination) |
 | **Swap to** | Okta (`createOktaResolver`), Azure Entra (`createEntraResolver`), Google Admin SDK, or a local JSON directory file. Implement `IdentityResolver` and wire in `src/index.ts`. |
 
 ---
@@ -28,7 +28,7 @@ Every third-party integration is behind a typed port (`createXxx(deps)` factory)
 | **Factory** | `createQueryHandler(deps)` (`src/slack/query-handler.ts`), `createDisconnectCommand(deps)` (`src/slack/disconnect-command.ts`) |
 | **Env vars** | `SLACK_BOT_TOKEN` (`xoxb-…`), `SLACK_SIGNING_SECRET`, `SLACK_APP_TOKEN` (`xapp-…`) — all in Secrets Manager |
 | **Setup** | [api.slack.com/apps](https://api.slack.com/apps) → create app → **Socket Mode** on → **App-Level Token** with `connections:write` → **OAuth & Permissions** scopes: `app_mentions:read`, `chat:write`, `commands`, `im:history`, `users:read`, `users:read.email` → **Slash Commands** → `/almanac` → install to workspace |
-| **Verify** | `npm test -- --grep "disconnect-command\|query-handler"` (13 tests total — 7 disconnect, 6 integration) |
+| **Verify** | `npm test -- --grep "disconnect-command\|query-handler"` (disconnect ack + revoke flow; full query-handler integration scenarios) |
 
 ---
 
@@ -42,7 +42,7 @@ Every third-party integration is behind a typed port (`createXxx(deps)` factory)
 | **OAuth** | Authorization Code + PKCE via `almanac-oauth` (Notion provider). Per-user tokens stored in DDB + KMS. |
 | **Env vars** | `NOTION_OAUTH_CLIENT_ID`, `NOTION_OAUTH_CLIENT_SECRET` (Secrets Manager) |
 | **Setup** | [notion.so/my-integrations](https://www.notion.so/my-integrations) → new **public** integration → type: OAuth → redirect URI `https://{APP_BASE_URL}/oauth/notion/callback` |
-| **Verify** | `npm test -- --grep acl-guard` (7 tests: 200/403/404/null-token/network-error, per-source routing) |
+| **Verify** | `npm test -- --grep acl-guard` (200/403/404/null-token/network-error paths, per-source routing, circuit-breaker trip → fail-secure) |
 
 ---
 
@@ -82,7 +82,7 @@ Every third-party integration is behind a typed port (`createXxx(deps)` factory)
 | **Auth** | IAM — the ECS task role is granted `bedrock:InvokeModel` on the specific model ARNs. No API key. |
 | **Env vars** | `BEDROCK_REGION` (default `us-west-2`), `BEDROCK_LLM_MODEL_ID` (default `anthropic.claude-sonnet-4-6`), `BEDROCK_EMBEDDING_MODEL_ID` (default `amazon.titan-embed-text-v2:0`) |
 | **Setup** | Enable model access in the AWS Console → Bedrock → Model access → request access to Claude Sonnet 4.6 + Titan Embeddings v2. IAM permissions are handled by the CDK stack. |
-| **Verify** | `npm test -- --grep "retriever\|generator"` (11 tests) |
+| **Verify** | `npm test -- --grep "retriever\|generator"` (RRF fusion ranking + dedup, Bedrock failure paths, stale-citation marker, circuit-breaker trip → empty hits) |
 | **Security** | Model invocation logging is force-disabled by the CDK stack via `AwsCustomResource` calling `deleteModelInvocationLoggingConfiguration` — source content never reaches CloudWatch or S3 logs. See `docs/threat-model.md`. |
 
 ---
@@ -97,7 +97,7 @@ Every third-party integration is behind a typed port (`createXxx(deps)` factory)
 | **Auth** | RDS master credentials auto-generated into Secrets Manager; ECS injects them as `PGUSER` / `PGPASSWORD`. Task SG has a dedicated ingress rule to the DB SG on 5432. No public ingress. |
 | **Env vars** | `RETRIEVAL_BACKEND_URL` (takes precedence) OR the individual `PGHOST` / `PGPORT` / `PGUSER` / `PGPASSWORD` / `PGDATABASE` fields (CDK-injected from RDS + Secrets Manager). Empty → null backend (retriever returns empty hits). |
 | **Setup** | CDK provisions an RDS Postgres `db.t4g.micro` in the private subnet. Schema bootstrap (`CREATE EXTENSION vector` + `CREATE TABLE chunks` + indexes) runs idempotently at app startup. Ingestion (embedding + writing to `chunks`) is a separate pipeline, out of scope here. |
-| **Verify** | `npm test -- --grep "retriever\|pgvector\|null"` (14 tests covering the backend port, pgvector SQL shape, null fallback, and retriever fusion) |
+| **Verify** | `npm test -- --grep "retriever\|pgvector\|null"` (backend port shape, pgvector SQL parameterisation, null fallback, retriever fusion) |
 | **Swap to** | OpenSearch, Qdrant, Pinecone, or a local stub — write a new adapter implementing `RetrievalBackend`, wire it in `src/index.ts` by extending the URL-scheme dispatcher. |
 
 ---
@@ -112,7 +112,7 @@ Every third-party integration is behind a typed port (`createXxx(deps)` factory)
 | **Auth** | VPC + TLS (`rediss://`), `rejectUnauthorized: true`. No API key. |
 | **Env vars** | `REDIS_URL` (the `rediss://` endpoint) |
 | **Setup** | CDK stack creates the ElastiCache cluster. No manual setup needed beyond deploy. |
-| **Verify** | `npm test -- --grep redis-limiter` (5 tests: under/blocked/fail-open) |
+| **Verify** | `npm test -- --grep redis-limiter` (under-limit/blocked/fail-open paths) |
 
 ---
 
@@ -125,7 +125,7 @@ Every third-party integration is behind a typed port (`createXxx(deps)` factory)
 | **Auth** | IAM — task role has `sqs:SendMessage` on the specific queue ARNs. |
 | **Env vars** | `SQS_AUDIT_QUEUE_URL`, `SQS_AUDIT_DLQ_URL` |
 | **Setup** | CDK stack creates the queues + Lambda consumer. No manual setup. |
-| **Verify** | `npm test -- --grep audit-logger` (5 tests: primary → DLQ → total-loss fallover) |
+| **Verify** | `npm test -- --grep audit-logger` (primary → DLQ → total-loss fallover) |
 
 ---
 

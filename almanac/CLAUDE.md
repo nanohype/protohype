@@ -51,7 +51,7 @@ Every module that touches an external boundary exposes a `createXxx(deps)` facto
 - **src/config/** — Zod schema validates every env var at startup; missing required keys fail-fast via `process.exit(1)`.
 - **src/logger.ts** — Pino, JSON to stderr. The mixin pulls `trace_id` + `span_id` from the active OTel span on every log call, so any code running inside an auto-instrumented fetch/http/aws-sdk hop (or the outer `requestContext.run`) emits fields Grafana Tempo → Loki can jump between one-click.
 - **src/index.ts** — Bootstrap. Builds every SDK client (Redis, SQS, DDB, Bedrock, retrieval backend, OAuth router) once, wires every `createXxx(deps)` factory, registers Bolt handlers (query + disconnect command), starts the `node:http` server on port 3001 serving `/health` + `/oauth/:provider/{start,callback}`. Graceful shutdown flushes metrics and stops Bolt on SIGTERM/SIGINT.
-- **packages/oauth/** — The scaffolded `almanac-oauth` package (module-oauth-delegation). Linked via `file:./packages/oauth` in Almanac's `package.json`. Self-contained: its own `package.json`, `tsconfig.json`, `vitest.config.ts`, **176 tests across 24 files**. Rebuild with `cd packages/oauth && npm run build`.
+- **packages/oauth/** — The scaffolded `almanac-oauth` package (module-oauth-delegation). Linked via `file:./packages/oauth` in Almanac's `package.json`. Self-contained: its own `package.json`, `tsconfig.json`, `vitest.config.ts`, and test suite. Rebuild with `cd packages/oauth && npm run build`.
 - **infra/lib/almanac-stack.ts** — CDK: ECS Fargate, internet-facing ALB fronting `/health` + `/oauth/:provider/{start,callback}` (HTTPS when `certArn` + `domainName` env vars are set, HTTP-only otherwise), DDB ×3 (tokens keyed on `(userId, provider)` to match the module's storage), ElastiCache Redis, RDS Postgres (pgvector), SQS+DLQ, Lambda audit consumer (`NODEJS_24_X`, explicit log group, 30d retention), S3 audit archive, KMS, Secrets Manager, VPC, Bedrock invocation logging disabled via `AwsCustomResource`, CloudWatch alarms (QueryP95 > 5s, LLMError ≥ 5/5min, AuditTotalLoss ≥ 1, AuditDLQ depth). Observability sidecars: ADOT Collector (OTLP → Grafana Cloud Tempo + Mimir, config from `infra/otel/collector-ecs.yaml`) + Fluent Bit FireLens log router (stdout → Grafana Cloud Loki, image built from `infra/otel/fluent-bit/`). App container uses `ecs.LogDrivers.firelens({})`; a dedicated CloudWatch log group `ForwarderDiagnosticsLogGroup` captures the collector + forwarder's own stderr (break-glass when Grafana is unreachable). Auth lives in a BYO Secrets Manager secret `almanac/${env}/grafana-cloud/otlp-auth` (shape: `instance_id`, `api_token`, `loki_username`, `loki_host`). Stack outputs `ServiceUrl`, `AlbDnsName`, `ClusterName`, `ServiceName` so `scripts/smoke.sh` can locate the live endpoint + service deterministically.
 - **scripts/smoke.sh** — Post-deploy smoke: reads stack outputs via CFN, waits for ECS steady state, curls `/health` (expects 200 with retry/backoff), then `/oauth/notion/start` (expects non-5xx — handler reachable, rejects unsigned URL cleanly). Used as the final step of `npm run deploy:{staging,production}`.
 
@@ -61,7 +61,7 @@ Every module that touches an external boundary exposes a `createXxx(deps)` facto
 npm run dev            # Start service via tsx watch (src/index.ts)
 npm run build          # tsc -p tsconfig.build.json — emits dist/, excludes *.test.ts
 npm start              # Run compiled output (dist/index.js)
-npm test               # vitest run — 12 files, 81 tests
+npm test               # vitest run
 npm run test:coverage  # vitest run --coverage (v8 provider)
 npm run test:watch     # interactive vitest watch mode
 npm run lint           # eslint src/ — flat config + typescript-eslint v8
@@ -122,12 +122,12 @@ App-level secrets in deployment live in AWS Secrets Manager at `almanac/{env}/ap
 
 ## Testing
 
-13 test files, colocated as `src/**/*.test.ts`. Run with `npm test`. Threshold-enforced coverage: 75 / 60 / 75 / 75 (statements / branches / functions / lines). Excludes `src/index.ts` (bootstrap, only verifiable in real-Slack integration), `src/connectors/types.ts` (type-only), `src/test-setup.ts`, and `*.test.ts` files themselves.
+Tests are colocated as `src/**/*.test.ts`. Run with `npm test`. Threshold-enforced coverage: 75 / 60 / 75 / 75 (statements / branches / functions / lines). Excludes `src/index.ts` (bootstrap, only verifiable in real-Slack integration), `src/connectors/types.ts` (type-only), `src/test-setup.ts`, and `*.test.ts` files themselves.
 
 Service-wrapper tests (boundary services, port-injected fakes):
 
 - `src/ratelimit/redis-limiter.test.ts` — fake `RateLimiterRedisPort`; under/blocked/fail-open
-- `src/identity/okta-resolver.test.ts` — fake fetch + fake Redis + DDB mock; L1/L2 cache, SCIM filter shape
+- `src/identity/workos-resolver.test.ts` — fake fetch + DDB mock; cache hit/miss, directory-filter shape, primary-email selection, multi-page cursor pagination
 - `src/connectors/acl-guard.test.ts` — fake fetch; 200 grants, 403/404 redact, missing token, network error, per-source routing, circuit-breaker trip
 - `src/rag/retriever.test.ts` — fake `RetrievalBackend` + Bedrock mock; pure `rrfFusion` ranking, dedup, topK, circuit-breaker trip → empty hits
 - `src/rag/generator.test.ts` — Bedrock mock; zero-hits vs everything-redacted, stale citations, dedup, Bedrock failure
