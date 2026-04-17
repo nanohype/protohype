@@ -122,6 +122,7 @@ const retriever = createRetriever({
   bedrock,
   embeddingModelId: config.BEDROCK_EMBEDDING_MODEL_ID,
   onTiming: timing,
+  onCounter: counter,
 });
 
 const generator = createGenerator({
@@ -132,7 +133,7 @@ const generator = createGenerator({
   onTiming: timing,
 });
 
-const aclGuard = createAclGuard({ fetchImpl: fetch });
+const aclGuard = createAclGuard({ fetchImpl: fetch, onCounter: counter });
 
 const { router: oauth, storage: oauthStorage } = createAlmanacOAuth({ auditLogger });
 

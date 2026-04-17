@@ -12,6 +12,10 @@ export default defineConfig({
       exclude: [
         "src/index.ts", // bootstrap; only verifiable in real-Slack integration
         "src/connectors/types.ts", // type declarations only
+        "src/scripts/**", // one-off dev seeders; run via ecs execute-command, not in-app
+        "src/rag/backends/pgvector-schema.ts", // DDL bootstrap; exercised by RDS at deploy time
+        "src/oauth/router.ts", // OAuth wiring; exercised by the real provider handshake (integration only)
+        "src/oauth/http.ts", // node:http ↔ Web Request bridge; covered end-to-end by smoke test
         "src/test-setup.ts",
         "src/**/*.test.ts",
       ],

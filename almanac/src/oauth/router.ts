@@ -20,7 +20,7 @@ import {
 } from "almanac-oauth";
 import type { AuditLogger } from "../audit/audit-logger.js";
 import { config } from "../config/index.js";
-import { requestContext } from "../context.js";
+import { trace } from "@opentelemetry/api";
 import { logger } from "../logger.js";
 import { verifyOAuthStartUrl } from "./url-token.js";
 
@@ -109,7 +109,14 @@ export function createAlmanacOAuth(deps: AlmanacOAuthConfig): AlmanacOAuth {
 
   const revocationEmitter: RevocationEmitter = {
     emit: async (event) => {
-      const traceId = requestContext.getStore()?.traceId;
+      // Pull trace_id off the active OTel span so revocation audit rows can
+      // be joined back to the request that caused them in Tempo/Loki.
+      const span = trace.getActiveSpan();
+      const ctx = span?.spanContext();
+      const traceId =
+        ctx && ctx.traceId && ctx.traceId !== "00000000000000000000000000000000"
+          ? ctx.traceId
+          : undefined;
       try {
         await deps.auditLogger.emitRevocation({ ...event, traceId });
       } catch (err) {

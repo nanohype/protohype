@@ -19,13 +19,14 @@
  * - VPC: private subnets, NAT gateway
  * - CloudWatch: alarms, dashboard
  */
+import * as fs from "node:fs";
 import * as path from "node:path";
 import * as cdk from "aws-cdk-lib";
 import * as ec2 from "aws-cdk-lib/aws-ec2";
 import * as rds from "aws-cdk-lib/aws-rds";
 import * as ecs from "aws-cdk-lib/aws-ecs";
 import * as elbv2 from "aws-cdk-lib/aws-elasticloadbalancingv2";
-import { Platform } from "aws-cdk-lib/aws-ecr-assets";
+import { DockerImageAsset, Platform } from "aws-cdk-lib/aws-ecr-assets";
 import * as dynamodb from "aws-cdk-lib/aws-dynamodb";
 import * as elasticache from "aws-cdk-lib/aws-elasticache";
 import * as sqs from "aws-cdk-lib/aws-sqs";
@@ -421,11 +422,36 @@ export class AlmanacStack extends cdk.Stack {
       },
     });
 
+    // Grafana Cloud OTLP + Loki auth — provisioned out-of-band by operators.
+    // JSON payload (see docs/secrets.md):
+    //   {
+    //     "instance_id":   "<otlp instance id>",          // ADOT collector (traces + metrics)
+    //     "api_token":     "<glc_... with otlp:write>",   // paired with instance_id above
+    //     "loki_username": "<loki user id>",              // Fluent Bit log forwarder
+    //     "loki_host":     "logs-prod-006.grafana.net"    // Grafana Cloud Loki host for region
+    //   }
+    // Referenced by name so CDK synth succeeds without a lookup round-trip.
+    const grafanaCloudOtlpAuthSecret = secretsmanager.Secret.fromSecretNameV2(
+      this,
+      "GrafanaCloudOtlpAuth",
+      `almanac/${props.environment}/grafana-cloud/otlp-auth`,
+    );
+
     // ECS Fargate cluster
     const cluster = new ecs.Cluster(this, "AlmanacCluster", {
       vpc,
       clusterName: `almanac-${props.environment}`,
       containerInsightsV2: ecs.ContainerInsights.ENABLED,
+    });
+
+    // Meta-log group: Fluent Bit + ADOT's OWN stderr (bootstrap errors,
+    // Loki/Tempo push failures) land here. App logs go to Grafana Cloud
+    // via Fluent Bit; this group is the break-glass for debugging the
+    // forwarder itself when Grafana isn't receiving anything.
+    const forwarderDiagnosticsLogGroup = new logs.LogGroup(this, "ForwarderDiagnosticsLogGroup", {
+      logGroupName: `/almanac/${props.environment}/forwarder-diagnostics`,
+      retention: logs.RetentionDays.ONE_WEEK,
+      removalPolicy: cdk.RemovalPolicy.DESTROY,
     });
 
     // ECS Task IAM Role — least-privilege: GetItem/PutItem/DeleteItem on
@@ -455,6 +481,7 @@ export class AlmanacStack extends cdk.Stack {
     auditDlq.grantSendMessages(taskRole);
     tokenKmsKey.grantEncryptDecrypt(taskRole);
     appSecrets.grantRead(taskRole);
+    grafanaCloudOtlpAuthSecret.grantRead(taskRole);
 
     // Bedrock: specific model ARNs only. Wildcard the Sonnet 4.6
     // version suffix so bumping the model doesn't require a stack update.
@@ -486,15 +513,9 @@ export class AlmanacStack extends cdk.Stack {
     // null backend (retriever returns empty hits) — useful for
     // infra-smoke deploys.
 
-    // CloudWatch metrics — resource="*" is the canonical pattern for
-    // PutMetricData because metric data doesn't have an ARN.
-    taskRole.addToPolicy(
-      new iam.PolicyStatement({
-        actions: ["cloudwatch:PutMetricData"],
-        resources: ["*"],
-        conditions: { StringEquals: { "cloudwatch:namespace": "Almanac" } },
-      }),
-    );
+    // CloudWatch PutMetricData permission intentionally removed — Almanac now
+    // emits metrics via OTLP to the ADOT sidecar, which ships to Grafana Cloud
+    // Mimir. Smaller attack surface.
 
     // ECS Exec (`aws ecs execute-command`) for staging debugging: seed data
     // into pgvector, inspect DDB, tail logs inside the VPC. The SSM-messages
@@ -540,6 +561,18 @@ export class AlmanacStack extends cdk.Stack {
         SQS_AUDIT_QUEUE_URL: auditQueue.queueUrl,
         SQS_AUDIT_DLQ_URL: auditDlq.queueUrl,
         REDIS_URL: redisEndpoint,
+        // OTel export → ADOT sidecar on localhost (defined below). Auto-
+        // instrumentation is activated via NODE_OPTIONS --require in the
+        // Dockerfile; manual spans for the query pipeline live in
+        // src/context.ts. service.namespace + deployment.environment are
+        // added by the collector's resource processor.
+        OTEL_SERVICE_NAME: "almanac",
+        OTEL_EXPORTER_OTLP_ENDPOINT: "http://localhost:4318",
+        OTEL_EXPORTER_OTLP_PROTOCOL: "http/protobuf",
+        OTEL_RESOURCE_ATTRIBUTES: `service.namespace=almanac,service.version=0.1.0,deployment.environment=${props.environment},aws.region=${this.region}`,
+        OTEL_TRACES_SAMPLER: "always_on",
+        OTEL_METRICS_EXPORTER: "otlp",
+        OTEL_METRIC_EXPORT_INTERVAL: "60000",
         // Retrieval backend — PG* fields let the app compose
         // RETRIEVAL_BACKEND_URL. PGHOST + PGPORT are non-secret (RDS
         // endpoint); PGUSER + PGPASSWORD come from the credentials
@@ -586,10 +619,10 @@ export class AlmanacStack extends cdk.Stack {
         PGUSER: ecs.Secret.fromSecretsManager(database.secret!, "username"),
         PGPASSWORD: ecs.Secret.fromSecretsManager(database.secret!, "password"),
       },
-      logging: ecs.LogDrivers.awsLogs({
-        streamPrefix: "almanac",
-        logRetention: logs.RetentionDays.ONE_MONTH,
-      }),
+      // firelens log driver hands stdout/stderr to the Fluent Bit sidecar
+      // (defined below) via Fargate's auto-wired forward protocol. Fluent
+      // Bit ships to Grafana Cloud Loki.
+      logging: ecs.LogDrivers.firelens({}),
       healthCheck: {
         // `curl` is not in node:20-alpine — use the same node one-liner
         // the Dockerfile HEALTHCHECK uses.
@@ -602,6 +635,85 @@ export class AlmanacStack extends cdk.Stack {
         retries: 3,
       },
       portMappings: [{ containerPort: 3001 }],
+    });
+
+    // ADOT Collector sidecar — receives OTLP on localhost:4318 from the app
+    // container and ships traces + metrics to Grafana Cloud Tempo/Mimir via
+    // the basicauth extension. Config is loaded from infra/otel/collector-ecs.yaml
+    // and embedded via AOT_CONFIG_CONTENT.
+    const collectorConfig = fs.readFileSync(
+      path.join(__dirname, "..", "otel", "collector-ecs.yaml"),
+      "utf8",
+    );
+    taskDef.addContainer("OtelCollector", {
+      containerName: "otel-collector",
+      image: ecs.ContainerImage.fromRegistry(
+        "public.ecr.aws/aws-observability/aws-otel-collector:latest",
+      ),
+      essential: true,
+      memoryReservationMiB: 128,
+      // Collector's own diagnostics land in the meta-log group on CloudWatch,
+      // not Loki — when Grafana Cloud is unreachable, we need to see WHY
+      // without relying on Grafana.
+      logging: ecs.LogDrivers.awsLogs({
+        streamPrefix: "otel",
+        logGroup: forwarderDiagnosticsLogGroup,
+      }),
+      environment: {
+        AOT_CONFIG_CONTENT: collectorConfig,
+        DEPLOYMENT_ENVIRONMENT: props.environment,
+      },
+      secrets: {
+        GRAFANA_INSTANCE_ID: ecs.Secret.fromSecretsManager(
+          grafanaCloudOtlpAuthSecret,
+          "instance_id",
+        ),
+        GRAFANA_API_TOKEN: ecs.Secret.fromSecretsManager(grafanaCloudOtlpAuthSecret, "api_token"),
+      },
+      healthCheck: {
+        command: ["CMD", "/healthcheck"],
+        interval: cdk.Duration.seconds(30),
+        timeout: cdk.Duration.seconds(5),
+        retries: 3,
+        startPeriod: cdk.Duration.seconds(30),
+      },
+      portMappings: [
+        { containerPort: 4317, protocol: ecs.Protocol.TCP }, // OTLP gRPC
+        { containerPort: 4318, protocol: ecs.Protocol.TCP }, // OTLP HTTP
+        { containerPort: 13133, protocol: ecs.Protocol.TCP }, // health_check extension
+      ],
+    });
+
+    // Fluent Bit sidecar — receives app stdout via the firelens forward
+    // protocol, parses the structured JSON, and ships to Grafana Cloud Loki
+    // via the built-in loki output. Image is built from infra/otel/fluent-bit/
+    // (Dockerfile + fluent-bit.conf + parsers.conf) so the config ships
+    // reproducibly with the stack. Its OWN stderr lands in the meta-log
+    // group on CloudWatch — when Loki is unreachable, we need to see the
+    // forwarder error somewhere other than the thing that isn't working.
+    const fluentBitImage = new DockerImageAsset(this, "FluentBitImage", {
+      directory: path.join(__dirname, "..", "otel", "fluent-bit"),
+    });
+    taskDef.addFirelensLogRouter("LogRouter", {
+      image: ecs.ContainerImage.fromDockerImageAsset(fluentBitImage),
+      firelensConfig: {
+        type: ecs.FirelensLogRouterType.FLUENTBIT,
+        options: {
+          configFileType: ecs.FirelensConfigFileType.FILE,
+          configFileValue: "/fluent-bit/etc/fluent-bit.conf",
+        },
+      },
+      essential: true,
+      memoryReservationMiB: 64,
+      logging: ecs.LogDrivers.awsLogs({
+        streamPrefix: "fluent-bit",
+        logGroup: forwarderDiagnosticsLogGroup,
+      }),
+      secrets: {
+        LOKI_USERNAME: ecs.Secret.fromSecretsManager(grafanaCloudOtlpAuthSecret, "loki_username"),
+        LOKI_API_TOKEN: ecs.Secret.fromSecretsManager(grafanaCloudOtlpAuthSecret, "api_token"),
+        LOKI_HOST: ecs.Secret.fromSecretsManager(grafanaCloudOtlpAuthSecret, "loki_host"),
+      },
     });
 
     // Multi-instance in prod - REQUIRES Redis for shared rate-limit state.
