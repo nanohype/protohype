@@ -1,0 +1,286 @@
+name: marshal-ci
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'marshal/**'
+      - '.github/workflows/marshal-ci.yml'
+  pull_request:
+    paths:
+      - 'marshal/**'
+      - '.github/workflows/marshal-ci.yml'
+
+env:
+  NODE_VERSION: '24'
+  AWS_REGION: us-west-2
+
+jobs:
+  lint:
+    name: Lint + Format
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: marshal
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: 'npm'
+          cache-dependency-path: marshal/package-lock.json
+      - run: npm ci
+      - run: npm run lint
+      - run: npm run format:check
+
+  build:
+    name: Build
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: marshal
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: 'npm'
+          cache-dependency-path: marshal/package-lock.json
+      - run: npm ci
+      - run: npm run build
+      - name: Build infra
+        run: |
+          cd infra
+          npm ci
+          npm run build
+
+  test-unit:
+    name: Unit Tests
+    runs-on: ubuntu-latest
+    needs: [build]
+    defaults:
+      run:
+        working-directory: marshal
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: 'npm'
+          cache-dependency-path: marshal/package-lock.json
+      - run: npm ci
+      - name: Run unit tests with coverage
+        run: npm run test:unit -- --coverage --coverageReporters=text --coverageReporters=lcov
+      - name: Verify coverage thresholds enforce (sanity check)
+        run: |
+          # Jest exits non-zero when thresholds in jest.config.cjs are violated. This step
+          # fails loudly if the `test:unit` step above happened to pass with 0 coverage.
+          test -s coverage/lcov.info && echo "Coverage data captured" || { echo "No coverage data — tests may not be running"; exit 1; }
+      - name: Upload coverage
+        uses: actions/upload-artifact@v4
+        with:
+          name: coverage-unit
+          path: marshal/coverage/
+
+  test-integration:
+    name: Integration Tests (dynamodb-local)
+    runs-on: ubuntu-latest
+    needs: [build]
+    defaults:
+      run:
+        working-directory: marshal
+    services:
+      dynamodb:
+        image: amazon/dynamodb-local
+        ports:
+          - 8000:8000
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: 'npm'
+          cache-dependency-path: marshal/package-lock.json
+      - run: npm ci
+      - name: Wait for dynamodb-local
+        run: |
+          for i in 1 2 3 4 5 6 7 8 9 10; do
+            if curl -s -o /dev/null -w '%{http_code}' http://localhost:8000/ | grep -q '400\|200'; then echo "dynamodb ready"; exit 0; fi
+            sleep 1
+          done
+          echo "dynamodb-local never became ready"; exit 1
+      - name: Run integration tests
+        run: npm run test:integration
+        env:
+          DDB_LOCAL_ENDPOINT: http://localhost:8000
+
+  security-audit:
+    name: Dependency Security Audit
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: marshal
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: 'npm'
+          cache-dependency-path: marshal/package-lock.json
+      - run: npm ci
+      - run: npm audit --audit-level=high
+      - run: npx tsc --noEmit
+      - name: Approval-gate invariant — Statuspage createIncident only inside the gate
+        run: |
+          VIOLATIONS=$(grep -rE "\.createIncident\(" src/ --include="*.ts" \
+            | grep -v "statuspage-approval-gate.ts" \
+            | grep -v "statuspage-client.ts" \
+            | wc -l)
+          if [ "$VIOLATIONS" -gt 0 ]; then
+            echo "SECURITY VIOLATION: createIncident() called outside StatuspageApprovalGate!"
+            grep -rE "\.createIncident\(" src/ --include="*.ts" | grep -v "statuspage-approval-gate.ts" | grep -v "statuspage-client.ts"
+            exit 1
+          fi
+          echo "✅ Approval-gate invariant verified"
+      - name: Adapter-gate invariant — no raw WebClient outside wiring + slack-adapter
+        run: |
+          # WebClient construction is allowed only in the bootstrap (wiring/dependencies.ts)
+          # and inside the SlackAdapter implementation. Anywhere else means a domain
+          # service is reaching past the timeout/retry discipline.
+          VIOLATIONS=$(grep -rE "new WebClient\(" src/ --include="*.ts" \
+            | grep -v "wiring/dependencies.ts" \
+            | grep -v "adapters/slack-adapter.ts" \
+            | wc -l)
+          if [ "$VIOLATIONS" -gt 0 ]; then
+            echo "ADAPTER VIOLATION: new WebClient() outside wiring + adapter!"
+            grep -rE "new WebClient\(" src/ --include="*.ts" | grep -v "wiring/dependencies.ts" | grep -v "adapters/slack-adapter.ts"
+            exit 1
+          fi
+          echo "✅ Slack adapter discipline verified"
+      - name: Adapter-gate invariant — no bare fetch() in src/ outside http-client
+        run: |
+          # All outbound HTTP must go through HttpClient (timeout + retry caps + tracing).
+          # Allowed: utils/http-client.ts (the implementation) and node:http handlers.
+          VIOLATIONS=$(grep -rnE "(^|[^.A-Za-z_])fetch\(" src/ --include="*.ts" \
+            | grep -v "utils/http-client.ts" \
+            | grep -v "// allow-fetch" \
+            | wc -l)
+          if [ "$VIOLATIONS" -gt 0 ]; then
+            echo "ADAPTER VIOLATION: bare fetch() outside utils/http-client.ts!"
+            grep -rnE "(^|[^.A-Za-z_])fetch\(" src/ --include="*.ts" | grep -v "utils/http-client.ts" | grep -v "// allow-fetch"
+            exit 1
+          fi
+          echo "✅ HTTP-client discipline verified"
+      - name: Security invariant — no baked Secrets Manager references in CDK env vars
+        run: |
+          # `cdk.SecretValue.secretsManager(...).unsafeUnwrap()` returns a
+          # `{{resolve:secretsmanager:...}}` token. Embedding it in a Lambda
+          # or ECS task `environment:` map lands the plaintext credential in
+          # the function / task-def config at deploy, readable by any
+          # principal with `lambda:GetFunctionConfiguration` or
+          # `ecs:DescribeTaskDefinition`. Use `ecs.Secret.fromSecretsManager`
+          # for sidecar injection, or fetch at runtime via the AWS SDK
+          # (see src/handlers/webhook-otel-init.ts) for Lambda code.
+          VIOLATIONS=$(grep -rnE "secretsmanager\([^)]*\)\.unsafeUnwrap" infra/ --include="*.ts" | wc -l)
+          if [ "$VIOLATIONS" -gt 0 ]; then
+            echo "SECURITY VIOLATION: cdk.SecretValue.secretsManager(...).unsafeUnwrap() bakes plaintext secrets into CDK-synthesized env vars."
+            grep -rnE "secretsmanager\([^)]*\)\.unsafeUnwrap" infra/ --include="*.ts"
+            echo
+            echo "Fix: use ecs.Secret.fromSecretsManager for sidecar env, or fetch via AWS SDK at runtime."
+            exit 1
+          fi
+          echo "✅ No baked Secrets Manager references in CDK"
+      - name: Inventory invariant — seeder, smoke, and template agree on the secret list
+        run: |
+          # Three sources of truth for the Marshal secret inventory:
+          #   - secrets.template.json keys (shape + defaults)
+          #   - scripts/seed-secrets.sh REQUIRED_KEYS (write path)
+          #   - scripts/smoke.sh REQUIRED_SECRETS (verify path)
+          # A mismatch means a secret was added in one place and forgotten in
+          # another, which bites on first-deploy with a task that can't start.
+          keys=$(jq -r 'del(._README) | keys[]' secrets.template.json | sort)
+          fail=0
+          for k in $keys; do
+            if ! grep -qF "\"$k\"" scripts/seed-secrets.sh; then
+              echo "drift: $k is in secrets.template.json but NOT in scripts/seed-secrets.sh REQUIRED_KEYS"
+              fail=1
+            fi
+            if ! grep -qF "/${k}\"" scripts/smoke.sh; then
+              echo "drift: $k is in secrets.template.json but NOT in scripts/smoke.sh REQUIRED_SECRETS"
+              fail=1
+            fi
+          done
+          # Belt-and-braces: each REQUIRED_KEYS entry must also appear in the
+          # template so operators who copy the template get every key up front.
+          # (Extracts "path/to/key" string literals under REQUIRED_KEYS array.)
+          seeder_keys=$(awk '/^REQUIRED_KEYS=\(/,/^\)/' scripts/seed-secrets.sh \
+            | grep -oE '"[a-z-]+/[a-z-]+(/[a-z-]+)?"' | tr -d '"' | sort -u)
+          for k in $seeder_keys; do
+            if ! jq -e --arg k "$k" 'has($k)' secrets.template.json >/dev/null; then
+              echo "drift: $k is in scripts/seed-secrets.sh REQUIRED_KEYS but NOT in secrets.template.json"
+              fail=1
+            fi
+          done
+          if [ "$fail" -ne 0 ]; then exit 1; fi
+          echo "✅ Secret inventory lists agree across template + seeder + smoke"
+
+  cdk-synth:
+    name: CDK Synth
+    runs-on: ubuntu-latest
+    needs: [build]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: 'npm'
+          cache-dependency-path: marshal/package-lock.json
+      # NodejsFunction bundling shells out to `npx --no-install esbuild` from
+      # the Lambda's `projectRoot` (marshal/), so esbuild must be in
+      # marshal/node_modules — not just in marshal/infra/node_modules.
+      - name: npm ci (marshal)
+        working-directory: marshal
+        run: npm ci
+      - name: npm ci (infra)
+        working-directory: marshal/infra
+        run: npm ci
+      - name: cdk synth
+        working-directory: marshal/infra
+        run: |
+          export CDK_DEFAULT_ACCOUNT=123456789012
+          export CDK_DEFAULT_REGION=us-west-2
+          export AWS_REGION=us-west-2
+          export AWS_ACCESS_KEY_ID=fake
+          export AWS_SECRET_ACCESS_KEY=fake
+          npx cdk synth --context account=123456789012 --context region=us-west-2 --lookups=false
+
+  docker-build:
+    name: Docker Build
+    runs-on: ubuntu-latest
+    needs: [build]
+    defaults:
+      run:
+        working-directory: marshal
+    steps:
+      - uses: actions/checkout@v4
+      - run: docker build -t marshal:ci .
+
+  merge-gate:
+    name: Merge Gate
+    runs-on: ubuntu-latest
+    needs: [lint, test-unit, test-integration, security-audit, cdk-synth, docker-build]
+    if: github.event_name == 'pull_request'
+    steps:
+      - name: All gates passed
+        run: |
+          echo "✅ Lint"
+          echo "✅ Unit Tests (100% branch on audit.ts + statuspage-approval-gate.ts)"
+          echo "✅ Integration Tests (ConsistentRead semantics verified against dynamodb-local)"
+          echo "✅ Dependency Security Audit (no HIGH/CRITICAL)"
+          echo "✅ CDK Synth"
+          echo "✅ Docker Build"
+          echo "✅ Approval-gate invariant verified"
+          echo "✅ Slack adapter discipline verified"
+          echo "✅ HTTP-client discipline verified"
+          echo "✅ No baked Secrets Manager references in CDK"
+          echo "✅ Secret inventory lists agree"
