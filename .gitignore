@@ -6,3 +6,12 @@ dist/
 coverage/
 cdk.out/
 cdk.context.json
+
+# Claude Code workspace (worktrees, local settings, memory).
+.claude/
+
+# Root-level package-lock. The repo has no root package.json; any lockfile
+# here is a stray from an accidental `npm install` at the wrong cwd.
+# Per-subsystem lockfiles (sigint/package-lock.json, marshal/package-lock.json, …)
+# are still tracked — this pattern is root-only by leading slash.
+/package-lock.json
