@@ -1,0 +1,44 @@
+import { TriggerPipelineButton } from '@/components/TriggerPipelineButton';
+import { AuthStatus } from '@/components/AuthStatus';
+
+// Static server component. Auth status renders client-side via AuthStatus,
+// because AuthKit's withAuth() / getSignInUrl() both want to mutate cookies
+// (token refresh + PKCE verifier respectively), and Next.js only allows
+// cookie mutations inside Route Handlers / Server Actions. Calling them
+// from this server component throws at render. Sign-in flow goes through
+// /api/auth/sign-in, sign-out through /api/auth/sign-out, both Route
+// Handlers where mutation is fine.
+export default function HomePage() {
+  return (
+    <main className="page-shell">
+      <header className="review-header">
+        <div className="review-header-row">
+          <h1>Dispatch</h1>
+          <AuthStatus />
+        </div>
+        <p className="muted">
+          Weekly newsletter review for the Chief of Staff. Open a draft from the
+          Slack notification link, or sign in to view the latest pending draft.
+        </p>
+      </header>
+      <section className="card" style={{ marginTop: 24 }}>
+        <h2>Getting here</h2>
+        <p>
+          Dispatch posts a link into <code>#newsletter-review</code> every
+          Friday morning. Click that link to land on the review page for the
+          week&apos;s draft.
+        </p>
+      </section>
+      <section className="card" style={{ marginTop: 24 }}>
+        <h2>Trigger a draft now</h2>
+        <p className="muted">
+          Approvers can fire the pipeline outside the weekly cadence — useful
+          for staging tests, mid-week catch-ups, or running after a config
+          change. The button below calls the pipeline task definition that
+          EventBridge fires on Friday. Sign in first if you haven&apos;t.
+        </p>
+        <TriggerPipelineButton />
+      </section>
+    </main>
+  );
+}
