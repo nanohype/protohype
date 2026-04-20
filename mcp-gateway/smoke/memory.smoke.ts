@@ -1,4 +1,4 @@
-import { mcpCall, parseMcpResultText, isMcpError, isMcpSuccess, testAgentId } from './helpers';
+import { mcpCall, parseMcpResultText, isMcpError, isMcpSuccess, testAgentId, type McpResponse } from './helpers';
 
 interface StoredMemory {
   memoryId: string;
@@ -67,17 +67,31 @@ async function del(memoryId: string): Promise<DeleteResult> {
   return parseMcpResultText<DeleteResult>(res.body);
 }
 
+// MCP spec: tools/list returns { tools } directly on `result` (not inside
+// the tools/call content-envelope), so assert the raw shape here.
+type ToolsListResult = { jsonrpc: '2.0'; id?: string | number; result: { tools: Array<{ name: string; inputSchema: { required?: string[] } }> } };
+
 describe('memory — protocol discovery', () => {
   test('tools/list returns 4 tools with expected names and required fields', async () => {
     const res = await mcpCall('/memory', 'tools/list');
     expect(res.status).toBe(200);
-    const { tools } = parseMcpResultText<{ tools: Array<{ name: string; inputSchema: { required?: string[] } }> }>(res.body);
+    const { tools } = (res.body as unknown as ToolsListResult).result;
     const byName = Object.fromEntries(tools.map((t) => [t.name, t]));
     expect(Object.keys(byName).sort()).toEqual(['memory_delete', 'memory_list', 'memory_query', 'memory_store']);
     expect(byName.memory_store.inputSchema.required).toEqual(['agentId', 'text']);
     expect(byName.memory_query.inputSchema.required).toEqual(['agentId', 'query']);
     expect(byName.memory_list.inputSchema.required).toEqual(['agentId']);
     expect(byName.memory_delete.inputSchema.required).toEqual(['agentId', 'memoryId']);
+  });
+
+  test('initialize returns protocolVersion + capabilities + serverInfo on result', async () => {
+    const res = await mcpCall('/memory', 'initialize');
+    expect(res.status).toBe(200);
+    const result = (res.body as McpResponse & { result: { protocolVersion: string; capabilities: unknown; serverInfo: { name: string; version: string } } }).result;
+    expect(result.protocolVersion).toBe('2024-11-05');
+    expect(result.capabilities).toBeDefined();
+    expect(result.serverInfo.name).toBe('mcp-gateway-memory');
+    expect(typeof result.serverInfo.version).toBe('string');
   });
 });
 

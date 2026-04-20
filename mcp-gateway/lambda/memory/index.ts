@@ -131,7 +131,13 @@ const TOOL_MAP: Record<string, (args: Record<string, unknown>) => Promise<unknow
   memory_store: toolMemoryStore, memory_query: toolMemoryQuery, memory_list: toolMemoryList, memory_delete: toolMemoryDelete,
 };
 
-function mcpOk(id: string | number | undefined, data: unknown): McpResponse {
+// Raw result for initialize / tools/list / etc. — the MCP spec places the
+// method-specific payload (protocolVersion, tools array, …) directly on
+// `result`. Only tools/call wraps its payload in a `content` array.
+function mcpOk(id: string | number | undefined, result: unknown): McpResponse {
+  return { jsonrpc: '2.0', id, result };
+}
+function mcpCallOk(id: string | number | undefined, data: unknown): McpResponse {
   return { jsonrpc: '2.0', id, result: { content: [{ type: 'text', text: JSON.stringify(data, null, 2) }] } };
 }
 function mcpErr(id: string | number | undefined, code: number, message: string): McpResponse {
@@ -140,13 +146,33 @@ function mcpErr(id: string | number | undefined, code: number, message: string):
 
 export const handler = async (event: APIGatewayProxyEventV2): Promise<APIGatewayProxyResultV2> => {
   const headers = { 'Content-Type': 'application/json' };
+
+  // Streamable HTTP transport opens a GET on the base path to upgrade to an
+  // SSE channel during initialize. We don't stream — return 200 with no body
+  // so the client falls through to plain POST request/response.
+  if (event.requestContext.http.method === 'GET') {
+    return { statusCode: 200, headers, body: '' };
+  }
+
   let body: McpRequest;
   try { body = JSON.parse(event.body ?? '{}') as McpRequest; }
   catch { return { statusCode: 400, headers, body: JSON.stringify(mcpErr(undefined, -32700, 'Parse error')) }; }
   const id = body.id;
   try {
-    if (body.method === 'initialize' || body.method === 'tools/list') {
+    if (body.method === 'initialize') {
+      return { statusCode: 200, headers, body: JSON.stringify(mcpOk(id, {
+        protocolVersion: '2024-11-05',
+        capabilities: { tools: {} },
+        serverInfo: { name: 'mcp-gateway-memory', version: '1.0.0' },
+      })) };
+    }
+    if (body.method === 'tools/list') {
       return { statusCode: 200, headers, body: JSON.stringify(mcpOk(id, { tools: TOOLS })) };
+    }
+    if (body.method === 'notifications/initialized' || !body.method) {
+      // Notifications have no id and MUST NOT receive a response body per
+      // JSON-RPC 2.0. Acknowledge at the HTTP layer and return empty.
+      return { statusCode: 200, headers, body: '' };
     }
     if (body.method !== 'tools/call') {
       return { statusCode: 200, headers, body: JSON.stringify(mcpErr(id, -32601, `Method not found: ${body.method}`)) };
@@ -157,7 +183,7 @@ export const handler = async (event: APIGatewayProxyEventV2): Promise<APIGateway
       return { statusCode: 200, headers, body: JSON.stringify(mcpErr(id, -32602, `Unknown tool: ${toolName}`)) };
     }
     const result = await TOOL_MAP[toolName]!(toolArgs);
-    return { statusCode: 200, headers, body: JSON.stringify(mcpOk(id, result)) };
+    return { statusCode: 200, headers, body: JSON.stringify(mcpCallOk(id, result)) };
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
     console.error('Memory server error:', message);
