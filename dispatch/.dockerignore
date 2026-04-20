@@ -1,0 +1,12 @@
+node_modules
+dist
+cdk.out
+.next
+.env
+.env.*
+!.env.example
+*.log
+.DS_Store
+.git
+.github
+infra/cdk.out

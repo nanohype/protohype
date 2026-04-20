@@ -1,0 +1,36 @@
+# syntax=docker/dockerfile:1.9
+
+# Build context is the dispatch/ directory (matches the CDK asset
+# reference `ecs.ContainerImage.fromAsset('../', { file: 'Dockerfile.web' })`).
+
+# ─── deps ───
+FROM node:24-alpine AS deps
+WORKDIR /app
+COPY web/package.json web/package-lock.json* ./
+RUN --mount=type=cache,target=/root/.npm npm ci
+
+# ─── build ───
+FROM node:24-alpine AS build
+WORKDIR /app
+COPY --from=deps /app/node_modules ./node_modules
+COPY web/ ./
+RUN npm run build
+
+# ─── runtime (standalone) ───
+FROM node:24-alpine AS runtime
+WORKDIR /app
+ENV NODE_ENV=production \
+    PORT=3000 \
+    HOSTNAME=0.0.0.0
+
+RUN addgroup -S dispatch && adduser -S dispatch -G dispatch
+
+# Next.js `output: 'standalone'` emits a self-contained server.js plus a
+# pruned node_modules — no need to carry the full workspace.
+COPY --from=build --chown=dispatch:dispatch /app/.next/standalone ./
+COPY --from=build --chown=dispatch:dispatch /app/.next/static ./.next/static
+COPY --from=build --chown=dispatch:dispatch /app/public ./public
+
+EXPOSE 3000
+USER dispatch
+CMD ["node", "server.js"]
