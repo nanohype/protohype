@@ -13,10 +13,8 @@
 import type { AllMiddlewareArgs, App, SlackCommandMiddlewareArgs } from "@slack/bolt";
 import type { OAuthRouter } from "almanac-oauth";
 import type { IdentityResolver } from "../identity/types.js";
+import { SUPPORTED_SOURCES, type Source } from "../connectors/types.js";
 import { logger } from "../logger.js";
-
-const SUPPORTED_SOURCES = ["notion", "confluence", "drive"] as const;
-type Source = (typeof SUPPORTED_SOURCES)[number];
 
 const USAGE = "Usage: `/almanac disconnect [notion|confluence|drive|all]`";
 

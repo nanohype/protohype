@@ -165,22 +165,77 @@ aws cloudwatch describe-alarms \
 
 ## 6. Monitoring & Alerts
 
-### 6.1 Key Metrics (CloudWatch)
+Almanac's observability stack is OTel-first — app logs go to **Grafana Cloud
+Loki** (via the Fluent Bit FireLens sidecar), traces + metrics go to **Grafana
+Cloud Tempo + Mimir** (via the ADOT collector sidecar, OTLP on `localhost:4318`).
+CloudWatch is still the alarm backplane for infrastructure-level signals
+(SQS DLQ depth, ECS service health) and the four app-level metrics the
+`src/metrics.ts` emitter still publishes to the `Almanac` namespace; every
+alarm fans out through a single SNS topic (`AlarmTopicArn` stack output) to
+PagerDuty / Slack / email.
 
-| Metric | Namespace | Alarm |
-|--------|-----------|-------|
-| Query latency p50 | `Almanac/Queries` | > 3s |
-| Query latency p95 | `Almanac/Queries` | > 8s |
-| Answer-with-citation rate | `Almanac/Quality` | < 95% |
-| ACL check error rate | `Almanac/ACL` | > 1% |
-| Audit DLQ depth | SQS | > 0 for 5min |
-| ECS service CPU | AWS/ECS | > 80% |
-| ECS service memory | AWS/ECS | > 85% |
-| Redis CPU | AWS/ElastiCache | > 70% |
+### 6.1 App metrics → Grafana Cloud Mimir
 
-### 6.2 Dashboards
+Latencies (histograms), counters, and the `circuit_open_total{source}` gauge
+live in Mimir. Query them in Grafana Cloud Explore or via the ops dashboard.
 
-Navigate to: CloudWatch → Dashboards → `Almanac-production`
+| Metric | Where | Alert target |
+|--------|-------|-------------|
+| `query_latency` histogram | Mimir | p95 > 5s for 15min (also a CloudWatch alarm — see below) |
+| `llm_latency` histogram | Mimir | p95 > 25s |
+| `retrieval_latency` histogram | Mimir | p95 > 2s |
+| `embedding_latency` histogram | Mimir | p95 > 1s |
+| `llm_error_total` counter | Mimir | rate > 1/min (also a CloudWatch alarm) |
+| `redaction_count` counter | Mimir | track per-source; sudden spike = source ACL regression |
+| `circuit_open_total{source}` counter | Mimir | any non-zero value pages on-call |
+| `rate_limit_hit_total{limit_type}` counter | Mimir | tracking, not alerting |
+
+### 6.2 Logs → Grafana Cloud Loki
+
+All app stdout/stderr ships to Loki via the Fluent Bit sidecar. Static stream
+labels: `service=almanac,environment={env},source=ecs`. Per-record labels:
+`$level`, `$traceId`. Jump from a trace in Tempo → the log stream for that
+`trace_id` with one click.
+
+Break-glass: Fluent Bit's own stderr (bootstrap / Loki push failures) lands in
+the CloudWatch log group `/almanac/{env}/forwarder-diagnostics` — open that
+when Grafana is showing silence and you suspect the forwarder.
+
+### 6.3 CloudWatch alarms (infrastructure + SLO backstop)
+
+Four alarms route via SNS (`AlarmTopicArn` output from the stack). Subscribe
+PagerDuty, a Slack webhook, or an email to the topic.
+
+| Alarm ID | Source | Threshold | Notes |
+|---|---|---|---|
+| `AuditDlqDepthAlarm` | `auditDlq` metricApproximateNumberOfMessagesVisible | ≥ 1 | Compliance — see RB-01 |
+| `QueryP95LatencyAlarm` | `Almanac` namespace `QueryLatency` p95 | > 5000ms for 3 × 5min | See RB-02 |
+| `LLMErrorAlarm` | `Almanac` namespace `LLMError` Sum | ≥ 5 in 5min | Bedrock failure rate |
+| `AuditTotalLossAlarm` | `Almanac` namespace `AuditTotalLoss` Sum | ≥ 1 in 5min | Primary SQS + DLQ both failed — compliance-critical |
+
+```bash
+# Who is paged when these fire? (Lists topic subscriptions.)
+aws sns list-subscriptions-by-topic \
+  --topic-arn "$(aws cloudformation describe-stacks \
+     --stack-name AlmanacProduction \
+     --query "Stacks[0].Outputs[?OutputKey=='AlarmTopicArn'].OutputValue" \
+     --output text)"
+```
+
+### 6.4 Traces → Grafana Cloud Tempo
+
+OTel spans from `http`/`fetch`/`aws-sdk`/`pg`/`ioredis` are auto-instrumented
+via `NODE_OPTIONS="--require @opentelemetry/auto-instrumentations-node/register"`
+(see `Dockerfile`). The active-span `trace_id` is stamped on every log line by
+the Pino mixin in `src/logger.ts`, so a one-liner error in Loki can be pivoted
+to the full trace in Tempo in one click.
+
+### 6.5 Dashboards
+
+The primary ops dashboard lives in **Grafana Cloud → Dashboards → `Almanac`**
+(provisioned out-of-band; not managed by this stack). CloudWatch no longer
+hosts an Almanac dashboard — app metrics stopped flowing there when the OTel
+migration landed.
 
 ---
 
@@ -229,23 +284,19 @@ aws sqs change-message-visibility-batch \
 **Possible causes:** Bedrock throttling, pgvector slow queries, ACL check timeouts
 
 ```bash
-# 1. Check ECS task logs
-aws logs filter-log-events \
-  --log-group-name /ecs/almanac \
-  --start-time $(date -d '30 minutes ago' +%s000) \
-  --filter-pattern "latencyMs"
+# 1. Find slow queries in Loki (query via Grafana Cloud → Explore → Loki):
+#    {service="almanac", environment="production"} |= "query processed" | json | latencyMs > 3000
+#    Then copy a `trace_id` and pivot to Tempo for the full span tree.
 
-# 2. Check Bedrock invocation latency
-aws cloudwatch get-metric-statistics \
-  --namespace AWS/Bedrock \
-  --metric-name InvocationLatency \
-  --dimensions Name=ModelId,Value=anthropic.anthropic.claude-sonnet-4-6:0 \
-  --start-time $(date -d '1 hour ago' -u +%FT%TZ) \
-  --end-time $(date -u +%FT%TZ) \
-  --period 300 \
-  --statistics Average
+# 2. Compare query_latency histogram in Mimir against baseline:
+#    histogram_quantile(0.95, sum by (le) (rate(query_latency_bucket[5m])))
+#    vs. the same expression over 24h ago.
 
-# 3. If Bedrock is the bottleneck:
+# 3. Bedrock latency: the auto-instrumented `aws-sdk` span group has the
+#    InvocationLatency broken down per model in Tempo. Filter by
+#    service.name=almanac AND rpc.method=InvokeModel.
+
+# 4. If Bedrock is the bottleneck:
 #    - Check Bedrock service quotas (tokens per minute)
 #    - Consider fallback to Claude 3 Haiku for simple queries
 #    - Request quota increase via AWS Support
@@ -261,16 +312,18 @@ aws cloudwatch get-metric-statistics \
 **Impact:** Possible conservative over-redaction (not under-redaction — fail-secure)
 
 ```bash
-# Check recent ACL check logs
-aws logs filter-log-events \
-  --log-group-name /ecs/almanac \
-  --filter-pattern "ACL check failed"
+# Recent ACL-probe non-auth errors (Grafana Cloud → Explore → Loki):
+#   {service="almanac"} |= "ACL probe non-auth error"
+# Redactions by source:
+#   sum by (source) (rate(redaction_count_total[5m]))    # in Mimir
 
-# Common cause: Source system token refresh needed
-# Check token expiry issues in logs:
-aws logs filter-log-events \
-  --log-group-name /ecs/almanac \
-  --filter-pattern "401"
+# Circuit-breaker trips (one trip = O(5) consecutive failures → fail-secure):
+#   {service="almanac"} |= "ACL probe short-circuited"
+#   or: circuit_open_total{source="notion|confluence|drive"} in Mimir
+
+# 401s typically mean user-specific token refresh — expected during
+# extended user absence. Check getValidToken warnings:
+#   {service="almanac"} |= "getValidToken failed"
 ```
 
 ### RB-04: ECS Service Not Running
@@ -324,11 +377,8 @@ aws elasticache describe-replication-groups \
 ## 8. Connector Crawl Operations
 
 ```bash
-# Check last crawl time for each source
-aws logs filter-log-events \
-  --log-group-name /ecs/almanac \
-  --filter-pattern "crawl complete" \
-  --start-time $(date -d '1 hour ago' +%s000)
+# Last crawl time for each source (Grafana Cloud → Explore → Loki):
+#   {service="almanac"} |= "crawl complete"
 
 # Force immediate re-crawl (e.g., after bulk doc updates)
 # Send a message to the crawl trigger queue or restart the ECS task

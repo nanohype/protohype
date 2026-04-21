@@ -108,19 +108,25 @@ export function formatOAuthPrompt(
   };
 }
 
+export interface RateLimitCopyOptions {
+  userPerHour: number;
+  workspacePerHour: number;
+  /** Test hook — override the wall clock used to compute the wait window. */
+  now?: () => number;
+}
+
 export function formatRateLimitMessage(
   limitType: "user" | "workspace",
   resetAt: number,
+  opts: RateLimitCopyOptions,
 ): FormattedResponse {
-  const resetTime = new Date(resetAt).toLocaleTimeString("en-US", {
-    hour: "2-digit",
-    minute: "2-digit",
-    timeZone: "America/New_York",
-  });
+  const now = opts.now ?? (() => Date.now());
+  const minutesUntilReset = Math.max(1, Math.ceil((resetAt - now()) / 60_000));
+  const waitCopy = minutesUntilReset === 1 ? "1 minute" : `${minutesUntilReset} minutes`;
   const message =
     limitType === "user"
-      ? `You've reached your query limit (20 queries/hour). You can ask again after ${resetTime} ET.`
-      : `The workspace query limit has been reached. Please try again after ${resetTime} ET.`;
+      ? `You've reached your query limit (${opts.userPerHour} queries/hour). Try again in about ${waitCopy}.`
+      : `The workspace query limit (${opts.workspacePerHour} queries/hour) has been reached. Try again in about ${waitCopy}.`;
   return {
     blocks: [section(`${EMOJI.HOURGLASS} ${message}`)],
     text: message,

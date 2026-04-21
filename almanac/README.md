@@ -17,7 +17,7 @@ In Slack: `@almanac what's our vacation policy?`
 ## Test
 
 ```bash
-npm test               # vitest run — 12 files, 82 tests, colocated as src/**/*.test.ts
+npm test               # vitest run — colocated as src/**/*.test.ts
 npm run test:coverage  # same, with v8 coverage report
 npm run typecheck      # tsc --noEmit
 npm run lint           # eslint src/ — flat config + typescript-eslint v8
@@ -35,7 +35,7 @@ npm run build          # tsc -p tsconfig.build.json — emits dist/, excludes *.
 
 ## Deploy
 
-CDK stack in [`infra/`](infra/) provisions ECS Fargate, an internet-facing ALB, DynamoDB ×3, ElastiCache Redis, RDS Postgres (pgvector), SQS+DLQ, Lambda audit consumer, KMS, Secrets Manager, VPC.
+CDK stack in [`infra/`](infra/) provisions ECS Fargate (app + ADOT collector sidecar for OTLP traces/metrics + Fluent Bit sidecar for stdout logs via FireLens), an internet-facing ALB, DynamoDB ×3, ElastiCache Redis, RDS Postgres (pgvector), SQS+DLQ, Lambda audit consumer, KMS, Secrets Manager, VPC. Telemetry ships to Grafana Cloud — Loki (logs), Tempo (traces), Mimir (metrics) — authenticated via an out-of-band `almanac/${env}/grafana-cloud/otlp-auth` Secrets Manager secret.
 
 One command runs everything — install → build `packages/oauth` → typecheck → lint → format check → tests → `npm audit` → `cdk deploy` (builds the Docker image, publishes to the CDK bootstrap asset repo, rolls the ECS service) → post-deploy smoke (waits for the service to stabilize, curls `/health` via the ALB, verifies `/oauth/:provider/start` is reachable):
 
@@ -94,7 +94,7 @@ Every external-IO module is a `createXxx(deps)` factory taking typed ports — `
 ## Contributing
 
 - TypeScript strict, ESM NodeNext, Node ≥ 24 (Active LTS)
-- Pino structured logging to stderr; stdout reserved for CLI output
+- Pino structured logging to stderr with OTel trace correlation (`trace_id` / `span_id` pulled from the active span); stdout reserved for CLI output
 - Zod at every boundary (env, Slack event payloads, WorkOS responses, provider APIs)
 - Explicit timeouts on every external call (`AbortSignal.timeout`, `NodeHttpHandler` `requestTimeout`/`connectionTimeout`, ioredis `connectTimeout`/`commandTimeout`)
 - Fail-secure for ACL, fail-open for rate-limit

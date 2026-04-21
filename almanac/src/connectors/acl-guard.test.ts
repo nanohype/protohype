@@ -101,4 +101,36 @@ describe("createAclGuard", () => {
     expect(results[0].accessVerified).toBe(true);
     expect(results[1].wasRedacted).toBe(true);
   });
+
+  it("circuit breaker: once tripped, subsequent probes short-circuit without invoking fetch", async () => {
+    // First probe throws a network error → breaker trips (failureThreshold is 5,
+    // but we emulate it with a low-threshold custom breaker config via multiple
+    // failed hits instead). This test exercises the default 5-fail config by
+    // forcing five network errors before the short-circuited call.
+    const fetchImpl = vi.fn<typeof fetch>(async () => {
+      throw new Error("ETIMEDOUT");
+    });
+    const onCounter = vi.fn();
+    const guard = createAclGuard({ fetchImpl, onCounter });
+
+    // 5 consecutive failures on the same source (notion) trip the breaker.
+    for (let i = 0; i < 5; i++) {
+      const [result] = await guard.verify([hit({ source: "notion" })], tokens);
+      expect(result.wasRedacted).toBe(true);
+    }
+    expect(fetchImpl).toHaveBeenCalledTimes(5);
+    expect(onCounter).toHaveBeenCalledWith("circuit_open_total", 1, { source: "notion" });
+    expect(onCounter).toHaveBeenCalledTimes(1);
+
+    // 6th probe: breaker is open, fetch MUST NOT be called.
+    const [shortCircuited] = await guard.verify([hit({ source: "notion" })], tokens);
+    expect(shortCircuited.wasRedacted).toBe(true);
+    expect(fetchImpl).toHaveBeenCalledTimes(5);
+
+    // Other sources are unaffected — per-source breakers are independent.
+    const okFetch = vi.fn<typeof fetch>(async () => stubResponse({ status: 200 }));
+    const otherGuard = createAclGuard({ fetchImpl: okFetch, onCounter: vi.fn() });
+    const [ok] = await otherGuard.verify([hit({ source: "drive", docId: "drive:f:1" })], tokens);
+    expect(ok.accessVerified).toBe(true);
+  });
 });

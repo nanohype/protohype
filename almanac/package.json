@@ -31,10 +31,11 @@
   },
   "dependencies": {
     "@aws-sdk/client-bedrock-runtime": "^3.1030.0",
-    "@aws-sdk/client-cloudwatch": "^3.1030.0",
     "@aws-sdk/client-dynamodb": "^3.1030.0",
     "@aws-sdk/client-kms": "^3.1030.0",
     "@aws-sdk/client-sqs": "^3.1030.0",
+    "@opentelemetry/api": "^1.9.1",
+    "@opentelemetry/auto-instrumentations-node": "^0.72.0",
     "@slack/bolt": "^4.7.0",
     "@smithy/node-http-handler": "^4.5.2",
     "almanac-oauth": "file:./packages/oauth",

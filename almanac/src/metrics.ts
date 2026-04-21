@@ -1,90 +1,59 @@
 /**
- * CloudWatch metrics emission.
+ * Application metrics via the OTel Metrics API.
  *
- * Buffers metric data points in memory and flushes via PutMetricData on a
- * timer or when the buffer fills. CloudWatch accepts up to 1000 datums per
- * call; we cap at 150 to leave headroom and bound a single flush's payload.
+ * Exports via OTLP to the ADOT collector sidecar (see infra/lib/almanac-stack.ts),
+ * which forwards to Grafana Cloud Mimir. The meter provider is bootstrapped by
+ * `@opentelemetry/auto-instrumentations-node/register` (NODE_OPTIONS in the
+ * Dockerfile) plus OTEL_METRICS_EXPORTER=otlp wired on the ECS task def.
  *
- * In NODE_ENV=test this is a no-op so unit + integration tests don't try to
- * reach AWS. Call flushMetrics() on shutdown to drain the buffer.
+ * Public surface (`timing`, `counter`, `flushMetrics`) is preserved from the
+ * prior CloudWatch implementation so call-sites don't change. `timing` →
+ * histogram (ms); `counter` → monotonic counter. `flushMetrics` is a no-op —
+ * the SDK batches + flushes on its own schedule, and shutdown is already
+ * handled by the OTel exporter.
+ *
+ * When no meter provider is registered (e.g. in vitest without the auto-
+ * instrumentations --require hook), the OTel API degrades to a no-op. That's
+ * intentional: tests don't need a mock metrics backend, and adding one would
+ * just re-assert the SDK's own contract.
  */
-import {
-  CloudWatchClient,
-  PutMetricDataCommand,
-  type MetricDatum,
-} from "@aws-sdk/client-cloudwatch";
-import { NodeHttpHandler } from "@smithy/node-http-handler";
-import { config } from "./config/index.js";
-import { logger } from "./logger.js";
+import { metrics as otelMetrics, type Counter, type Histogram } from "@opentelemetry/api";
 
-const NAMESPACE = "Almanac";
-const FLUSH_INTERVAL_MS = 60_000;
-const MAX_BUFFER_SIZE = 150;
+const METER_NAME = "almanac";
 
-const isTest = config.NODE_ENV === "test";
+const counters = new Map<string, Counter>();
+const histograms = new Map<string, Histogram>();
 
-const client = new CloudWatchClient({
-  region: config.AWS_REGION,
-  requestHandler: new NodeHttpHandler({
-    requestTimeout: 3000,
-    connectionTimeout: 1000,
-  }),
-});
-
-const buffer: MetricDatum[] = [];
-let flushTimer: NodeJS.Timeout | null = null;
-
-const baseDimensions = [{ Name: "Environment", Value: config.NODE_ENV }];
-
-function toDimensions(extra?: Record<string, string>) {
-  if (!extra) return baseDimensions;
-  return [...baseDimensions, ...Object.entries(extra).map(([Name, Value]) => ({ Name, Value }))];
+function getCounter(name: string): Counter {
+  let c = counters.get(name);
+  if (!c) {
+    c = otelMetrics.getMeter(METER_NAME).createCounter(name);
+    counters.set(name, c);
+  }
+  return c;
 }
 
-function enqueue(datum: MetricDatum) {
-  if (isTest) return;
-  buffer.push(datum);
-  if (buffer.length >= MAX_BUFFER_SIZE) {
-    void flushMetrics();
-    return;
+function getHistogram(name: string): Histogram {
+  let h = histograms.get(name);
+  if (!h) {
+    h = otelMetrics.getMeter(METER_NAME).createHistogram(name, { unit: "ms" });
+    histograms.set(name, h);
   }
-  if (!flushTimer) {
-    flushTimer = setTimeout(() => void flushMetrics(), FLUSH_INTERVAL_MS);
-    // Let Node exit even if the timer is still armed.
-    flushTimer.unref?.();
-  }
-}
-
-export async function flushMetrics(): Promise<void> {
-  if (flushTimer) {
-    clearTimeout(flushTimer);
-    flushTimer = null;
-  }
-  const batch = buffer.splice(0, buffer.length);
-  if (batch.length === 0) return;
-  try {
-    await client.send(new PutMetricDataCommand({ Namespace: NAMESPACE, MetricData: batch }));
-  } catch (err) {
-    logger.error({ err, count: batch.length }, "CloudWatch PutMetricData failed; metrics lost");
-  }
+  return h;
 }
 
 export function timing(name: string, ms: number, dimensions?: Record<string, string>): void {
-  enqueue({
-    MetricName: name,
-    Value: ms,
-    Unit: "Milliseconds",
-    Timestamp: new Date(),
-    Dimensions: toDimensions(dimensions),
-  });
+  getHistogram(name).record(ms, dimensions);
 }
 
 export function counter(name: string, value = 1, dimensions?: Record<string, string>): void {
-  enqueue({
-    MetricName: name,
-    Value: value,
-    Unit: "Count",
-    Timestamp: new Date(),
-    Dimensions: toDimensions(dimensions),
-  });
+  getCounter(name).add(value, dimensions);
+}
+
+/**
+ * Flush hook retained for shutdown compatibility. The OTel SDK owns its
+ * own batching + export cadence; no app-side flush is required.
+ */
+export function flushMetrics(): Promise<void> {
+  return Promise.resolve();
 }

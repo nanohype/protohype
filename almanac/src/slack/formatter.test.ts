@@ -74,15 +74,31 @@ describe("formatOAuthPrompt", () => {
 });
 
 describe("formatRateLimitMessage", () => {
-  it("uses the user-limit copy for user-scoped throttling", () => {
-    const result = formatRateLimitMessage("user", Date.now() + 60_000);
+  const NOW = 1_700_000_000_000;
+  const opts = { userPerHour: 20, workspacePerHour: 500, now: () => NOW };
+
+  it("uses the user-limit copy and the configured per-user limit", () => {
+    const result = formatRateLimitMessage("user", NOW + 10 * 60_000, opts);
     expect(result.text).toMatch(/your query limit/i);
+    expect(result.text).toContain("20 queries/hour");
     expect(JSON.stringify(result.blocks)).toContain("\u23f3"); // hourglass
   });
 
-  it("uses the workspace-limit copy for workspace-scoped throttling", () => {
-    const result = formatRateLimitMessage("workspace", Date.now() + 60_000);
+  it("uses the workspace-limit copy and the configured workspace limit", () => {
+    const result = formatRateLimitMessage("workspace", NOW + 10 * 60_000, opts);
     expect(result.text).toMatch(/workspace query limit/i);
+    expect(result.text).toContain("500 queries/hour");
+  });
+
+  it("renders the wait time in whole minutes (relative, timezone-free)", () => {
+    const result = formatRateLimitMessage("user", NOW + 7 * 60_000, opts);
+    expect(result.text).toContain("7 minutes");
+    expect(result.text).not.toContain("ET");
+  });
+
+  it("floors the wait time to 1 minute even when the reset is seconds away", () => {
+    const result = formatRateLimitMessage("user", NOW + 500, opts);
+    expect(result.text).toContain("1 minute");
   });
 });
 

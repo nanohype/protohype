@@ -85,6 +85,38 @@ describe("createRetriever — hybridSearch", () => {
     });
     expect(await retriever.hybridSearch("q", [0, 1, 0])).toEqual([]);
   });
+
+  it("circuit breaker: trips after repeated failures then fails soft with empty hits", async () => {
+    const knn = vi.fn<RetrievalBackend["knnSearch"]>(async () => {
+      throw new Error("pg-down");
+    });
+    const text = vi.fn<RetrievalBackend["textSearch"]>(async () => {
+      throw new Error("pg-down");
+    });
+    const backend: RetrievalBackend = { knnSearch: knn, textSearch: text };
+    const onCounter = vi.fn();
+    const retriever = createRetriever({
+      backend,
+      bedrock: new BedrockRuntimeClient({}),
+      embeddingModelId: "titan-v2",
+      onCounter,
+    });
+
+    // Five failures trip the default breaker (failureThreshold: 5).
+    for (let i = 0; i < 5; i++) {
+      await expect(retriever.hybridSearch("q", [0.1])).rejects.toThrow("pg-down");
+    }
+    expect(onCounter).toHaveBeenCalledWith("circuit_open_total", 1, { source: "retrieval" });
+    expect(onCounter).toHaveBeenCalledTimes(1);
+
+    // 6th call: breaker open → fail soft, empty hits.
+    const hits = await retriever.hybridSearch("q", [0.1]);
+    expect(hits).toEqual([]);
+    // knn/text each called once per attempt before the trip (5 calls total each);
+    // the short-circuited 6th attempt does NOT invoke the backend again.
+    expect(knn).toHaveBeenCalledTimes(5);
+    expect(text).toHaveBeenCalledTimes(5);
+  });
 });
 
 describe("rrfFusion (pure)", () => {

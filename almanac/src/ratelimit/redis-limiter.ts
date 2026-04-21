@@ -97,7 +97,18 @@ export function createRateLimiter(deps: RateLimiterConfig): RateLimiter {
       p2.zadd(workspaceKey, t, member);
       p2.expire(userKey, Math.ceil(windowMs / 1000) + 10);
       p2.expire(workspaceKey, Math.ceil(windowMs / 1000) + 10);
-      await p2.exec();
+      try {
+        await p2.exec();
+      } catch (err) {
+        // The read pipeline already said this request is allowed — don't
+        // punish the caller for a transient Redis blip between the two
+        // pipelines. Worst case: this request goes uncounted and the user
+        // gets one extra query in the current window. Fail-open.
+        logger.warn(
+          { err, slackUserId },
+          "rate limiter write pipeline failed; request allowed anyway",
+        );
+      }
 
       return {
         allowed: true,

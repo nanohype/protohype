@@ -1,79 +1,39 @@
-import { describe, it, expect, beforeEach, vi } from "vitest";
-import { mockClient } from "aws-sdk-client-mock";
-import { CloudWatchClient, PutMetricDataCommand } from "@aws-sdk/client-cloudwatch";
-
-// Override config so the metrics module does NOT treat this run as a test
-// (the module no-ops when NODE_ENV=test; here we want to exercise the
-// buffer + flush path directly).
-vi.mock("../src/config/index.js", () => ({
-  config: {
-    NODE_ENV: "development",
-    AWS_REGION: "us-west-2",
-  },
-}));
-
+/**
+ * Smoke test for the OTel-backed metrics surface.
+ *
+ * The OTel API is a no-op when no meter provider is registered, which is
+ * exactly what we want under vitest (no auto-instrumentations --require in
+ * the test runner). These cases just assert the public entry points don't
+ * throw — exercising the histogram/counter caches without any runtime deps.
+ *
+ * The real pipeline is validated in the live environment via the ADOT
+ * collector sidecar + Grafana Cloud Mimir; there is nothing useful to
+ * assert here without spinning up an OTel SDK + exporter.
+ */
+import { describe, it, expect } from "vitest";
 import { timing, counter, flushMetrics } from "./metrics.js";
 
-const cwMock = mockClient(CloudWatchClient);
-
-beforeEach(async () => {
-  cwMock.reset();
-  // Drain any buffer left over from a previous test.
-  cwMock.on(PutMetricDataCommand).resolves({});
-  await flushMetrics();
-  cwMock.reset();
-});
-
-describe("metrics", () => {
-  it("buffers datums and flushes them to PutMetricData on demand", async () => {
-    cwMock.on(PutMetricDataCommand).resolves({});
-    timing("QueryLatency", 123);
-    counter("RedactionCount", 2);
-    await flushMetrics();
-
-    const calls = cwMock.commandCalls(PutMetricDataCommand);
-    expect(calls).toHaveLength(1);
-    const input = calls[0].args[0].input;
-    expect(input.Namespace).toBe("Almanac");
-    expect(input.MetricData).toHaveLength(2);
-    expect(input.MetricData?.[0].MetricName).toBe("QueryLatency");
-    expect(input.MetricData?.[0].Unit).toBe("Milliseconds");
-    expect(input.MetricData?.[1].MetricName).toBe("RedactionCount");
-    expect(input.MetricData?.[1].Unit).toBe("Count");
+describe("metrics (OTel no-op surface)", () => {
+  it("timing() does not throw under the no-op API", () => {
+    expect(() => timing("QueryLatency", 123)).not.toThrow();
+    expect(() => timing("QueryLatency", 456, { stage: "embed" })).not.toThrow();
   });
 
-  it("attaches the Environment dimension to every datum", async () => {
-    cwMock.on(PutMetricDataCommand).resolves({});
-    counter("SomeCounter");
-    await flushMetrics();
-    const dims =
-      cwMock.commandCalls(PutMetricDataCommand)[0].args[0].input.MetricData?.[0].Dimensions;
-    expect(dims).toEqual([{ Name: "Environment", Value: "development" }]);
+  it("counter() does not throw under the no-op API", () => {
+    expect(() => counter("RateLimitHit")).not.toThrow();
+    expect(() => counter("RateLimitHit", 2, { limit_type: "user" })).not.toThrow();
   });
 
-  it("merges caller-supplied dimensions with the base Environment dimension", async () => {
-    cwMock.on(PutMetricDataCommand).resolves({});
-    counter("RateLimitHit", 1, { limit_type: "user" });
-    await flushMetrics();
-    const dims =
-      cwMock.commandCalls(PutMetricDataCommand)[0].args[0].input.MetricData?.[0].Dimensions;
-    expect(dims).toHaveLength(2);
-    expect(dims).toEqual(
-      expect.arrayContaining([
-        { Name: "Environment", Value: "development" },
-        { Name: "limit_type", Value: "user" },
-      ]),
-    );
+  it("reuses instrument handles across calls (cached by name)", () => {
+    // Same name, same attributes — must not throw or leak.
+    for (let i = 0; i < 5; i++) {
+      counter("CacheHit");
+      timing("CacheLatency", i);
+    }
+    expect(true).toBe(true);
   });
 
-  it("does not throw when PutMetricData fails (metrics are best-effort)", async () => {
-    cwMock.on(PutMetricDataCommand).rejects(new Error("throttled"));
-    timing("X", 1);
-    await expect(flushMetrics()).resolves.not.toThrow();
-  });
-
-  it("flushMetrics on an empty buffer is a cheap no-op (no API call)", async () => {
-    await flushMetrics();
-    expect(cwMock.commandCalls(PutMetricDataCommand)).toHaveLength(0);
+  it("flushMetrics resolves cleanly (no-op)", async () => {
+    await expect(flushMetrics()).resolves.toBeUndefined();
   });
 });

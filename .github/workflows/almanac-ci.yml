@@ -37,6 +37,18 @@ jobs:
         run: npm install --prefer-offline --no-audit --no-fund
         working-directory: almanac/packages/oauth
 
+      - name: Lint (almanac-oauth)
+        run: npm run lint
+        working-directory: almanac/packages/oauth
+
+      - name: Typecheck (almanac-oauth)
+        run: npm run typecheck
+        working-directory: almanac/packages/oauth
+
+      - name: Test (almanac-oauth)
+        run: npm test
+        working-directory: almanac/packages/oauth
+
       - name: Build almanac-oauth
         run: npm run build
         working-directory: almanac/packages/oauth
@@ -49,6 +61,63 @@ jobs:
 
       - name: Test
         run: npm test
+
+      - name: SDK-mock ban invariant (ports-not-patches)
+        # Ports, not SDK patches: every cross-boundary service is a
+        # createXxx(deps) factory. Tests inject fakes implementing the typed
+        # port — `vi.mock("<sdk-package>")` would patch the SDK module
+        # itself, defeating the point. Relative-path mocks are fine (they're
+        # internal modules). AWS SDK clients use aws-sdk-client-mock, which
+        # attaches to the client instance, not `vi.mock`.
+        run: |
+          VIOLATIONS=$(grep -RnE "vi\.mock\(['\"](@aws-sdk/|@slack/bolt|@opentelemetry/|ioredis|pg|almanac-oauth|node:crypto|node:http)" src --include='*.test.ts' || true)
+          if [ -n "$VIOLATIONS" ]; then
+            echo "::error::SDK-mock ban: vi.mock of an SDK package is forbidden — inject a port fake instead."
+            echo "$VIOLATIONS"
+            exit 1
+          fi
+          echo "SDK-mock ban invariant holds"
+
+      - name: Bare-fetch ban invariant
+        # `fetch(` outside explicitly permitted modules: every HTTP-boundary
+        # service receives `fetchImpl: typeof fetch` so tests can pass
+        # `vi.fn<typeof fetch>()`. Call-sites that MUST construct fetch
+        # directly (bootstrap, OAuth module bridge) are whitelisted; anything
+        # else must accept fetch via deps. Opt-out on a single line with the
+        # marker `// allow-fetch`.
+        run: |
+          VIOLATIONS=$(grep -RnE "(^|[^.A-Za-z_])fetch\(" src --include='*.ts' \
+            | grep -v '\.test\.ts' \
+            | grep -v 'src/index\.ts' \
+            | grep -v 'src/connectors/' \
+            | grep -v 'src/identity/workos-resolver\.ts' \
+            | grep -v 'src/oauth/' \
+            | grep -v '// allow-fetch' \
+            || true)
+          if [ -n "$VIOLATIONS" ]; then
+            echo "::error::Bare fetch( call outside permitted modules — inject fetchImpl instead, or add // allow-fetch."
+            echo "$VIOLATIONS"
+            exit 1
+          fi
+          echo "Bare-fetch ban invariant holds"
+
+      - name: Slack WebClient construction invariant
+        # `new WebClient(` outside the Slack boundary (src/index.ts + src/slack/*)
+        # leaks a hard SDK dep into a module that should be receiving a typed
+        # port. Bolt wires the client itself at the app boundary; downstream
+        # handlers receive it via middleware args.
+        run: |
+          VIOLATIONS=$(grep -RnE "new WebClient\(" src --include='*.ts' \
+            | grep -v '\.test\.ts' \
+            | grep -v 'src/index\.ts' \
+            | grep -v 'src/slack/' \
+            || true)
+          if [ -n "$VIOLATIONS" ]; then
+            echo "::error::new WebClient( outside src/index.ts / src/slack/* — inject the client via deps."
+            echo "$VIOLATIONS"
+            exit 1
+          fi
+          echo "Slack WebClient construction invariant holds"
 
       - name: Build (emit dist)
         run: npm run build

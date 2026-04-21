@@ -40,18 +40,19 @@ Every module that touches an external boundary exposes a `createXxx(deps)` facto
 - **src/slack/** — `createQueryHandler(deps)` orchestrates the pipeline (rate → identity → token presence check → embed → search → ACL → generate → format → audit). `createDisconnectCommand(deps)` implements the `/almanac disconnect [source|all]` slash command (user self-service revoke; revocations flow through the OAuth port → audit pipeline). `formatter.ts` builds Block Kit responses (answers, citations, OAuth prompts, rate-limit messages, error messages with trace IDs).
 - **src/identity/** — `createWorkOSResolver({fetchImpl, ddbClient, workosApiKey, workosDirectoryId, ...})` maps Slack user → workforce-directory user via WorkOS Directory Sync, cached in DDB (1h TTL). Bearer-API-key auth means no service-token refresh, no L2 cache.
 - **src/oauth/** — Almanac's adoption of the `almanac-oauth` package (scaffolded into `packages/oauth/` from the nanohype `module-oauth-delegation` template). `createAlmanacOAuth({auditLogger, ...})` builds the OAuth router with Notion/Atlassian/Google providers + DDB+KMS storage + a `RevocationEmitter` that lands in the audit pipeline. `url-token.ts` signs and verifies the short-lived OAuth `/start` URLs handed to users in Slack. `http.ts` bridges node:http ↔ Web-standard Request/Response so the module's framework-neutral handlers can live on Almanac's existing HTTP server.
-- **src/connectors/** — `createAclGuard({fetchImpl})` verifies access per source (Notion/Confluence/Drive) using a `getAccessToken` callback (supplied by the query handler as `oauth.getValidToken`). Per-source probes live in `notion.ts`/`confluence.ts`/`drive.ts` behind a `ConnectorVerifier` registry; each probe receives the injected `fetchImpl` so tests pass `vi.fn<typeof fetch>()`. Fail-secure: missing token, 403, 404, timeout, network error → `wasRedacted=true`.
-- **src/rag/** — `createRetriever({backend, bedrock, embeddingModelId})` runs k-NN (Bedrock Titan embeddings) + BM25 against a narrow `RetrievalBackend` port (null, pgvector, or a custom adapter) and fuses via Reciprocal Rank Fusion (`rrfFusion` is a pure export, covered directly). `createGenerator({bedrock, llmModelId, staleThresholdDays, ...})` calls Claude Sonnet 4.6 via Bedrock with a strict system prompt and the verified-accessible documents.
+- **src/connectors/** — `createAclGuard({fetchImpl, onCounter})` verifies access per source (Notion/Confluence/Drive) using a `getAccessToken` callback (supplied by the query handler as `oauth.getValidToken`). Per-source probes live in `notion.ts`/`confluence.ts`/`drive.ts` behind a `ConnectorVerifier` registry; each probe receives the injected `fetchImpl` so tests pass `vi.fn<typeof fetch>()`. Every source gets its own circuit breaker (`failureThreshold: 5`, `windowMs: 60s`, `halfOpenAfterMs: 30s`); when a breaker trips we emit `circuit_open_total{source}` once and short-circuit to `wasRedacted=true` until the cooldown elapses. Fail-secure: missing token, 403, 404, timeout, network error, or open breaker → `wasRedacted=true`.
+- **src/rag/** — `createRetriever({backend, bedrock, embeddingModelId, onCounter})` runs k-NN (Bedrock Titan embeddings) + BM25 against a narrow `RetrievalBackend` port (null, pgvector, or a custom adapter) and fuses via Reciprocal Rank Fusion (`rrfFusion` is a pure export, covered directly). The retrieval backend (k-NN + BM25) is wrapped in one breaker (`source: "retrieval"`); when tripped we log a warn and return empty hits — the generator handles empty context gracefully. Embeddings (Bedrock Titan) are deliberately not on the same breaker (Bedrock has its own retry). `createGenerator({bedrock, llmModelId, staleThresholdDays, ...})` calls Claude Sonnet 4.6 via Bedrock with a strict system prompt and the verified-accessible documents.
 - **src/audit/** — `createAuditLogger({sqs, queueUrl, dlqUrl, ...})` builds and emits audit events to SQS (at-least-once → DLQ → `AuditTotalLoss` metric). Discriminated `AuditEvent = QueryAuditEvent | RevocationAuditEvent` union. `buildQueryAuditEvent` is a pure helper, covered directly. `pii-scrubber.ts` removes email/phone/SSN/credit-card/AWS-account/GitHub-PAT/Slack-token/JWT/API-key patterns at the boundary.
 - **src/ratelimit/** — `createRateLimiter({redis, userPerHour, workspacePerHour})` is a Redis sliding-window limiter (per-user + per-workspace). Multi-instance ECS requires shared state; in-memory Maps would multiply the limit by instance count. Fails open if Redis is unreachable.
 - **src/redis.ts** — Default ioredis client factory used by the bootstrap. Consumers receive the Redis port via `createXxx` factory deps, never via direct module import.
-- **src/metrics.ts** — Buffered CloudWatch `PutMetricData` emitter (Environment dimension, `NODE_ENV=test` no-op, flush on shutdown). `timing()` / `counter()` primitives that other modules consume via `onTiming` / `onCounter` hooks.
-- **src/context.ts** — `AsyncLocalStorage<{traceId}>` for request-scoped correlation. The Pino logger mixes this in to every log line automatically.
+- **src/util/circuit-breaker.ts** — `createCircuitBreaker({name, failureThreshold, windowMs, halfOpenAfterMs, onOpen, now?})` is a pure, timer-less breaker used by the ACL guard (per source) and the retriever (one). Closed → sliding-window failure count; once the count reaches threshold, open and fail fast with `CircuitOpenError`. After `halfOpenAfterMs` a single probe is allowed; success → closed, failure → back to open with a fresh `openedAt`. `onOpen` fires exactly once per closed→open transition so callers can wire a `circuit_open_total{source}` counter. All time reads go through the injected `now()` — tests tick a fake clock synchronously.
+- **src/metrics.ts** — OTel metrics (`@opentelemetry/api`) behind a `timing` / `counter` / `flushMetrics` surface that's call-site-compatible with the old CloudWatch emitter. `timing` → histogram (unit `ms`), `counter` → monotonic counter; both are exported OTLP by the auto-instrumentation runtime to the ADOT collector sidecar → Grafana Cloud Mimir. `flushMetrics` is a no-op retained for shutdown-path symmetry.
+- **src/context.ts** — `requestContext.run(_ctx, fn)` wraps `fn` in a `slack.query` OTel active span. The `traceId` field in the legacy argument is ignored (OTel owns trace IDs); callers that still want a local UUID for user-facing error messages keep their own variable. No AsyncLocalStorage shim.
 - **src/config/** — Zod schema validates every env var at startup; missing required keys fail-fast via `process.exit(1)`.
-- **src/logger.ts** — Pino, JSON to stderr, with async-context trace-ID injection.
+- **src/logger.ts** — Pino, JSON to stderr. The mixin pulls `trace_id` + `span_id` from the active OTel span on every log call, so any code running inside an auto-instrumented fetch/http/aws-sdk hop (or the outer `requestContext.run`) emits fields Grafana Tempo → Loki can jump between one-click.
 - **src/index.ts** — Bootstrap. Builds every SDK client (Redis, SQS, DDB, Bedrock, retrieval backend, OAuth router) once, wires every `createXxx(deps)` factory, registers Bolt handlers (query + disconnect command), starts the `node:http` server on port 3001 serving `/health` + `/oauth/:provider/{start,callback}`. Graceful shutdown flushes metrics and stops Bolt on SIGTERM/SIGINT.
-- **packages/oauth/** — The scaffolded `almanac-oauth` package (module-oauth-delegation). Linked via `file:./packages/oauth` in Almanac's `package.json`. Self-contained: its own `package.json`, `tsconfig.json`, `vitest.config.ts`, **176 tests across 24 files**. Rebuild with `cd packages/oauth && npm run build`.
-- **infra/lib/almanac-stack.ts** — CDK: ECS Fargate, internet-facing ALB fronting `/health` + `/oauth/:provider/{start,callback}` (HTTPS when `certArn` + `domainName` env vars are set, HTTP-only otherwise), DDB ×3 (tokens keyed on `(userId, provider)` to match the module's storage), ElastiCache Redis, RDS Postgres (pgvector), SQS+DLQ, Lambda audit consumer (`NODEJS_24_X`, explicit log group, 30d retention), S3 audit archive, KMS, Secrets Manager, VPC, Bedrock invocation logging disabled via `AwsCustomResource`, CloudWatch alarms (QueryP95 > 5s, LLMError ≥ 5/5min, AuditTotalLoss ≥ 1, AuditDLQ depth). Stack outputs `ServiceUrl`, `AlbDnsName`, `ClusterName`, `ServiceName` so `scripts/smoke.sh` can locate the live endpoint + service deterministically.
+- **packages/oauth/** — The scaffolded `almanac-oauth` package (module-oauth-delegation). Linked via `file:./packages/oauth` in Almanac's `package.json`. Self-contained: its own `package.json`, `tsconfig.json`, `vitest.config.ts`, and test suite. Rebuild with `cd packages/oauth && npm run build`.
+- **infra/lib/almanac-stack.ts** — CDK: ECS Fargate, internet-facing ALB fronting `/health` + `/oauth/:provider/{start,callback}` (HTTPS when `certArn` + `domainName` env vars are set, HTTP-only otherwise), DDB ×3 (tokens keyed on `(userId, provider)` to match the module's storage), ElastiCache Redis, RDS Postgres (pgvector), SQS+DLQ, Lambda audit consumer (`NODEJS_24_X`, explicit log group, 30d retention), S3 audit archive, KMS, Secrets Manager, VPC, Bedrock invocation logging disabled via `AwsCustomResource`, CloudWatch alarms (QueryP95 > 5s, LLMError ≥ 5/5min, AuditTotalLoss ≥ 1, AuditDLQ depth). Observability sidecars: ADOT Collector (OTLP → Grafana Cloud Tempo + Mimir, config from `infra/otel/collector-ecs.yaml`) + Fluent Bit FireLens log router (stdout → Grafana Cloud Loki, image built from `infra/otel/fluent-bit/`). App container uses `ecs.LogDrivers.firelens({})`; a dedicated CloudWatch log group `ForwarderDiagnosticsLogGroup` captures the collector + forwarder's own stderr (break-glass when Grafana is unreachable). Auth lives in a BYO Secrets Manager secret `almanac/${env}/grafana-cloud/otlp-auth` (shape: `instance_id`, `api_token`, `loki_username`, `loki_host`). Stack outputs `ServiceUrl`, `AlbDnsName`, `ClusterName`, `ServiceName` so `scripts/smoke.sh` can locate the live endpoint + service deterministically.
 - **scripts/smoke.sh** — Post-deploy smoke: reads stack outputs via CFN, waits for ECS steady state, curls `/health` (expects 200 with retry/backoff), then `/oauth/notion/start` (expects non-5xx — handler reachable, rejects unsigned URL cleanly). Used as the final step of `npm run deploy:{staging,production}`.
 
 ## Commands
@@ -60,7 +61,7 @@ Every module that touches an external boundary exposes a `createXxx(deps)` facto
 npm run dev            # Start service via tsx watch (src/index.ts)
 npm run build          # tsc -p tsconfig.build.json — emits dist/, excludes *.test.ts
 npm start              # Run compiled output (dist/index.js)
-npm test               # vitest run — 12 files, 81 tests
+npm test               # vitest run
 npm run test:coverage  # vitest run --coverage (v8 provider)
 npm run test:watch     # interactive vitest watch mode
 npm run lint           # eslint src/ — flat config + typescript-eslint v8
@@ -93,7 +94,7 @@ CDK uses `ecs.ContainerImage.fromAsset("..")` so each deploy produces a new imag
 All config via env vars, validated by Zod in `src/config/index.ts`. Copy `.env.example` to `.env` and fill in. Required (no defaults):
 
 - **Slack**: `SLACK_BOT_TOKEN`, `SLACK_SIGNING_SECRET`, `SLACK_APP_TOKEN`
-- **AWS**: `DYNAMODB_TABLE_TOKENS`, `DYNAMODB_TABLE_AUDIT`, `DYNAMODB_TABLE_IDENTITY_CACHE`, `SQS_AUDIT_QUEUE_URL`, `SQS_AUDIT_DLQ_URL`, `KMS_KEY_ID`, `REDIS_URL`
+- **AWS**: `DYNAMODB_TABLE_TOKENS`, `DYNAMODB_TABLE_AUDIT`, `DYNAMODB_TABLE_IDENTITY_CACHE`, `SQS_AUDIT_QUEUE_URL`, `SQS_AUDIT_DLQ_URL`, `KMS_KEY_ID`, `REDIS_URL`. Operators also provision `almanac/${env}/grafana-cloud/otlp-auth` in Secrets Manager with `{instance_id, api_token, loki_username, loki_host}`; the ADOT sidecar + Fluent Bit forwarder read it via `ecs.Secret.fromSecretsManager` — see `docs/secrets.md` for the JSON shape.
 - **WorkOS**: `WORKOS_API_KEY`, `WORKOS_DIRECTORY_ID`
 - **OAuth apps** (per source): `NOTION_OAUTH_*`, `CONFLUENCE_OAUTH_*`, `GOOGLE_OAUTH_*`
 - **OAuth delegation**: `STATE_SIGNING_SECRET` (≥ 32 bytes — HMACs both the module's state cookie and Almanac's signed `/start` URL tokens)
@@ -110,6 +111,7 @@ App-level secrets in deployment live in AWS Secrets Manager at `almanac/{env}/ap
 - TypeScript strict, ESM NodeNext, Node ≥ 24 (Active LTS). Docker base image `node:24-alpine`, CI runs Node 24, Lambda runs `NODEJS_24_X`.
 - Zod for all input validation (config, Slack event payloads at the boundary, third-party API responses).
 - Structured JSON logging to stderr via Pino (`src/logger.ts`) — stdout reserved for CLI output.
+- Logs / metrics / traces correlate via OTel `trace_id`; the logger pulls from the active span automatically (no ALS). App stdout → FireLens → Grafana Cloud Loki; OTLP → ADOT collector sidecar → Grafana Cloud Tempo (traces) + Mimir (metrics).
 - Vitest for tests with `globals: true`. `src/test-setup.ts` seeds env vars so the config Zod parse succeeds in the runner.
 - ESLint flat config (`eslint.config.js`) + `typescript-eslint` v8, no warnings allowed in CI.
 - Prettier 3.8 — `format:check` is part of CI.
@@ -120,17 +122,18 @@ App-level secrets in deployment live in AWS Secrets Manager at `almanac/{env}/ap
 
 ## Testing
 
-12 test files, 81 tests, colocated as `src/**/*.test.ts`. Run with `npm test`. Threshold-enforced coverage: 75 / 60 / 75 / 75 (statements / branches / functions / lines). Excludes `src/index.ts` (bootstrap, only verifiable in real-Slack integration), `src/connectors/types.ts` (type-only), `src/test-setup.ts`, and `*.test.ts` files themselves.
+Tests are colocated as `src/**/*.test.ts`. Run with `npm test`. Threshold-enforced coverage: 75 / 60 / 75 / 75 (statements / branches / functions / lines). Excludes `src/index.ts` (bootstrap, only verifiable in real-Slack integration), `src/connectors/types.ts` (type-only), `src/test-setup.ts`, and `*.test.ts` files themselves.
 
 Service-wrapper tests (boundary services, port-injected fakes):
 
 - `src/ratelimit/redis-limiter.test.ts` — fake `RateLimiterRedisPort`; under/blocked/fail-open
-- `src/identity/okta-resolver.test.ts` — fake fetch + fake Redis + DDB mock; L1/L2 cache, SCIM filter shape
-- `src/connectors/acl-guard.test.ts` — fake fetch; 200 grants, 403/404 redact, missing token, network error, per-source routing
-- `src/rag/retriever.test.ts` — fake `RetrievalBackend` + Bedrock mock; pure `rrfFusion` ranking, dedup, topK
+- `src/identity/workos-resolver.test.ts` — fake fetch + DDB mock; cache hit/miss, directory-filter shape, primary-email selection, multi-page cursor pagination
+- `src/connectors/acl-guard.test.ts` — fake fetch; 200 grants, 403/404 redact, missing token, network error, per-source routing, circuit-breaker trip
+- `src/rag/retriever.test.ts` — fake `RetrievalBackend` + Bedrock mock; pure `rrfFusion` ranking, dedup, topK, circuit-breaker trip → empty hits
 - `src/rag/generator.test.ts` — Bedrock mock; zero-hits vs everything-redacted, stale citations, dedup, Bedrock failure
 - `src/audit/audit-logger.test.ts` — SQS mock; primary → DLQ → total-loss fallover, pure `buildQueryAuditEvent`
-- `src/metrics.test.ts` — CloudWatch mock via `aws-sdk-client-mock`
+- `src/metrics.test.ts` — smoke test for the OTel no-op surface (`timing`, `counter`, `flushMetrics` must not throw without a registered provider)
+- `src/util/circuit-breaker.test.ts` — pure state machine; closed/open/half-open transitions, rolling window, `onOpen` firing exactly once per trip (fake clock)
 
 Pure-logic tests (no I/O):
 
@@ -148,8 +151,8 @@ When adding tests: accept the SDK client as a typed dep on the source-side facto
 ## Dependencies
 
 - **`@aws-sdk/client-bedrock-runtime`** — Bedrock Claude (LLM) + Titan (embeddings); on-account inference, no source content to third parties
-- **`@aws-sdk/client-cloudwatch`** — buffered `PutMetricData` for app metrics
 - **`@aws-sdk/client-dynamodb`** — token store, identity cache, audit log
+- **`@opentelemetry/api`** + **`@opentelemetry/auto-instrumentations-node`** — OTel traces/metrics (histograms + counters); the `--require` hook in the Dockerfile auto-instruments http/fetch/aws-sdk/pg before user code
 - **`@aws-sdk/client-kms`** — token envelope encryption
 - **`@aws-sdk/client-sqs`** — audit event queue (at-least-once + DLQ)
 - **`pg`** — pgvector retrieval backend (RDS Postgres)
