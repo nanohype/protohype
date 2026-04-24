@@ -1,0 +1,126 @@
+name: applicability-classifier-precision
+description: |
+  Labeled (rule-change, client-config, expected-disposition) tuples. Exercises
+  the classifier against the same prompt + system prompt used in production.
+  Run with watchtower-evals against a live Bedrock endpoint; report
+  disposition-level precision as the top-line metric.
+
+  Target: ≥ 0.9 precision on the "alert" disposition. False alerts are
+  expensive (they erode operator trust); false negatives are caught by
+  the review queue and are preferable under uncertainty.
+
+cases:
+  - id: sec-15c3-1-vs-broker-dealer-client
+    description: direct hit — SEC broker-dealer capital rule against a broker-dealer client
+    input:
+      ruleChange:
+        sourceId: sec-edgar
+        title: "Proposed amendment to Rule 15c3-1 intraday capital requirements"
+        url: https://www.sec.gov/news/release/34-xxxxx
+        summary: "SEC proposes amendments to Rule 15c3-1 requiring broker-dealers to compute intraday capital at hourly intervals"
+        body: >
+          The Securities and Exchange Commission is proposing amendments to
+          Rule 15c3-1 of the Securities Exchange Act of 1934, which would
+          require broker-dealers to compute intraday capital at hourly
+          intervals rather than end-of-day. The proposed amendments aim to
+          enhance capital adequacy monitoring during periods of market stress.
+        publishedAt: "2026-04-20T10:00:00Z"
+      client:
+        clientId: acme-broker-dealer
+        name: Acme Securities
+        products: [broker-dealer]
+        jurisdictions: [US-federal]
+        frameworks: [SEC-rule-15c3-1, Reg-SCI]
+    expect:
+      disposition: alert
+      minScore: 80
+      applicable: true
+
+  - id: sec-15c3-1-vs-consumer-banking-client
+    description: miss — broker-dealer rule against a consumer-bank-only client
+    input:
+      ruleChange:
+        sourceId: sec-edgar
+        title: "Proposed amendment to Rule 15c3-1 intraday capital requirements"
+        url: https://www.sec.gov/news/release/34-xxxxx
+        summary: "SEC proposes amendments to Rule 15c3-1 requiring broker-dealers to compute intraday capital at hourly intervals"
+        body: "Same text as the SEC 15c3-1 rule change above."
+        publishedAt: "2026-04-20T10:00:00Z"
+      client:
+        clientId: beta-bank
+        name: Beta Consumer Bank
+        products: [consumer-checking, consumer-savings]
+        jurisdictions: [US-federal, US-CA]
+        frameworks: [GLBA, Reg-DD, Reg-E]
+    expect:
+      disposition: drop
+      maxScore: 50
+      applicable: false
+
+  - id: cfpb-overdraft-vs-consumer-banking-client
+    description: direct hit — CFPB overdraft rule against a consumer bank
+    input:
+      ruleChange:
+        sourceId: cfpb
+        title: "CFPB finalizes rule limiting overdraft fees on consumer checking accounts"
+        url: https://www.consumerfinance.gov/newsroom/overdraft-rule-final
+        summary: "CFPB issues final rule capping overdraft fees at $5 or the issuer's calculated cost of providing coverage"
+        body: >
+          The Consumer Financial Protection Bureau today announced the final
+          rule establishing the amount that certain insured depository
+          institutions may charge for covering an overdraft as limited to
+          either a benchmark fee of $5 or an amount that reflects the
+          institution's costs.
+        publishedAt: "2026-04-20T14:00:00Z"
+      client:
+        clientId: beta-bank
+        name: Beta Consumer Bank
+        products: [consumer-checking, consumer-savings]
+        jurisdictions: [US-federal, US-CA]
+        frameworks: [GLBA, Reg-DD, Reg-E]
+    expect:
+      disposition: alert
+      minScore: 80
+      applicable: true
+
+  - id: ofac-sdn-update-vs-payments-client
+    description: adjacent — sanctions list update against a payments client (review, not alert)
+    input:
+      ruleChange:
+        sourceId: ofac
+        title: "OFAC adds 12 entities to SDN list"
+        url: https://home.treasury.gov/system/files/126/sdn_advanced.xml
+        summary: "Specially Designated Nationals list updated — new entities under Executive Order 13224"
+        body: "Twelve entities added; see attached for names and identifiers."
+        publishedAt: "2026-04-20T16:00:00Z"
+      client:
+        clientId: gamma-payments
+        name: Gamma Payments
+        products: [cross-border-payments, remittance]
+        jurisdictions: [US-federal, EU]
+        frameworks: [OFAC-SDN, BSA-AML]
+    expect:
+      disposition: alert
+      minScore: 80
+      applicable: true
+
+  - id: edpb-gdpr-guidance-vs-us-only-client
+    description: miss — EU-only guidance against a US-only client
+    input:
+      ruleChange:
+        sourceId: edpb
+        title: "EDPB guidelines on AI model training data"
+        url: https://www.edpb.europa.eu/news/ai-training-data-guidelines
+        summary: "European Data Protection Board issues guidelines on GDPR compliance for AI model training"
+        body: "Guidelines for controllers processing personal data for AI model training under the GDPR."
+        publishedAt: "2026-04-20T09:00:00Z"
+      client:
+        clientId: beta-bank
+        name: Beta Consumer Bank
+        products: [consumer-checking, consumer-savings]
+        jurisdictions: [US-federal, US-CA]
+        frameworks: [GLBA, Reg-DD, Reg-E]
+    expect:
+      disposition: drop
+      maxScore: 50
+      applicable: false

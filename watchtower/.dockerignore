@@ -1,0 +1,13 @@
+.git
+.env
+.env.*
+cdk.out
+coverage
+**/coverage
+dist
+**/dist
+infra
+node_modules
+**/node_modules
+*.tsbuildinfo
+.DS_Store

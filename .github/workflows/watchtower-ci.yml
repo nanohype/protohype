@@ -1,0 +1,200 @@
+name: watchtower-ci
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'watchtower/**'
+      - '.github/workflows/watchtower-ci.yml'
+  pull_request:
+    paths:
+      - 'watchtower/**'
+      - '.github/workflows/watchtower-ci.yml'
+
+env:
+  NODE_VERSION: '24'
+  AWS_REGION: us-west-2
+
+jobs:
+  lint-root:
+    name: Lint + Format + Typecheck (root)
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: watchtower
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: 'npm'
+          cache-dependency-path: watchtower/package-lock.json
+      - run: npm ci
+      - run: npm run typecheck
+      - run: npm run lint
+      - run: npm run format:check
+
+  test-root:
+    name: Root tests (worker)
+    runs-on: ubuntu-latest
+    needs: [lint-root]
+    defaults:
+      run:
+        working-directory: watchtower
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: 'npm'
+          cache-dependency-path: watchtower/package-lock.json
+      - run: npm ci
+      - run: npm test
+
+  test-packages:
+    name: Tests (packages/${{ matrix.package }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        package:
+          - observability
+          - vector-store
+          - database
+          - queue
+          - notifications
+          - knowledge-base
+          - pipeline
+          - evals
+    defaults:
+      run:
+        working-directory: watchtower/packages/${{ matrix.package }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: 'npm'
+          cache-dependency-path: watchtower/packages/${{ matrix.package }}/package-lock.json
+      - run: npm ci
+      - run: npm run lint
+      - run: npm test
+
+  cdk-synth:
+    name: CDK Synth (both stacks)
+    runs-on: ubuntu-latest
+    needs: [lint-root]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: 'npm'
+          cache-dependency-path: watchtower/infra/package-lock.json
+      # NodejsFunction bundling shells out to esbuild from the Lambda's
+      # projectRoot — for watchtower that's the infra/ directory itself,
+      # so esbuild in infra/node_modules is sufficient.
+      - name: npm ci (infra)
+        working-directory: watchtower/infra
+        run: npm ci
+      - name: tsc --noEmit (infra)
+        working-directory: watchtower/infra
+        run: npx tsc --noEmit
+      - name: cdk synth (staging + production)
+        working-directory: watchtower/infra
+        env:
+          CDK_DEFAULT_ACCOUNT: '123456789012'
+          CDK_DEFAULT_REGION: us-west-2
+          AWS_ACCESS_KEY_ID: fake
+          AWS_SECRET_ACCESS_KEY: fake
+        run: |
+          npx cdk synth WatchtowerStaging --lookups=false
+          npx cdk synth WatchtowerProduction --lookups=false
+
+  security-audit:
+    name: Dependency security audit (prod)
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: watchtower
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: 'npm'
+          cache-dependency-path: watchtower/package-lock.json
+      - run: npm ci
+      - name: Audit (root, high+ prod deps only)
+        run: npm run audit:prod
+      - name: No literal Secrets Manager secret values baked into CDK
+        working-directory: watchtower/infra
+        run: |
+          # cdk.SecretValue.secretsManager(...).unsafeUnwrap() bakes plaintext
+          # into the synthesized template. Use ecs.Secret.fromSecretsManager
+          # for sidecar injection, or fetch via AWS SDK at runtime.
+          VIOLATIONS=$(grep -rnE "secretsmanager\([^)]*\)\.unsafeUnwrap" lib/ --include="*.ts" 2>/dev/null | wc -l)
+          if [ "$VIOLATIONS" -gt 0 ]; then
+            echo "SECURITY VIOLATION: cdk.SecretValue.secretsManager(...).unsafeUnwrap() bakes plaintext secrets into CDK-synthesized env vars."
+            grep -rnE "secretsmanager\([^)]*\)\.unsafeUnwrap" lib/ --include="*.ts"
+            exit 1
+          fi
+          echo "✅ No baked Secrets Manager references in CDK"
+
+      - name: Approval gate invariant — only approval-gate.ts invokes PublisherPort.publish()
+        working-directory: watchtower
+        run: |
+          # The ONLY sanctioned path into a PublisherPort.publish() is the
+          # approval gate in src/publish/approval-gate.ts. Any other call
+          # site bypasses the ConsistentRead verification and lets an
+          # unapproved memo ship to an external system.
+          #
+          # Allowed:
+          #   - approval-gate.ts                (gate's single call site)
+          #   - src/publish/fake.ts             (test double defining its own .publish)
+          #   - src/publish/notion.ts           (adapter DEFINING publish)
+          #   - src/publish/confluence.ts       (adapter DEFINING publish)
+          #   - src/handlers/publish.ts         (calls the gate, not a publisher)
+          #   - test files                      (exercise the gate via the fake)
+          VIOLATIONS=$(grep -rnE "\.publish\(" src/ --include="*.ts" \
+            | grep -v "src/publish/approval-gate.ts" \
+            | grep -v "src/publish/fake.ts" \
+            | grep -v "src/publish/notion.ts" \
+            | grep -v "src/publish/confluence.ts" \
+            | grep -v "src/publish/types.ts" \
+            | grep -v "src/handlers/publish.ts" \
+            | grep -v "\.test\.ts:" \
+            | grep -v "publishQueue\.publish" || true)
+          if [ -n "$VIOLATIONS" ]; then
+            echo "SECURITY VIOLATION: PublisherPort.publish() called outside the approval gate."
+            echo "$VIOLATIONS"
+            exit 1
+          fi
+          echo "✅ Approval gate invariant verified"
+
+  docker-build:
+    name: Docker build (worker image)
+    runs-on: ubuntu-latest
+    needs: [lint-root]
+    defaults:
+      run:
+        working-directory: watchtower
+    steps:
+      - uses: actions/checkout@v4
+      - run: docker build -t watchtower:ci .
+
+  merge-gate:
+    name: Merge gate
+    runs-on: ubuntu-latest
+    needs: [lint-root, test-root, test-packages, cdk-synth, security-audit, docker-build]
+    if: github.event_name == 'pull_request'
+    steps:
+      - name: All gates passed
+        run: |
+          echo "✅ Lint + Format + Typecheck"
+          echo "✅ Root tests"
+          echo "✅ Package tests (8 packages)"
+          echo "✅ CDK Synth (staging + production)"
+          echo "✅ Dependency audit (high+ prod)"
+          echo "✅ No baked Secrets Manager values in CDK"
+          echo "✅ Docker build"
