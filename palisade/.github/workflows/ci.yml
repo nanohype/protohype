@@ -1,0 +1,79 @@
+name: palisade-ci
+on:
+  pull_request:
+    paths:
+      - "palisade/**"
+  push:
+    branches: [feat/palisade]
+
+jobs:
+  ci:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: palisade
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "24"
+          cache: npm
+          cache-dependency-path: palisade/package-lock.json
+
+      - run: npm ci
+
+      - name: grep-gate — label-approval gate invariant
+        run: bash scripts/ci/grep-gate.sh
+
+      - name: grep-error-leak — forbid layer/model/latency leaks
+        run: bash scripts/ci/grep-error-leak.sh
+
+      - name: grep-vi-mock — forbid vi.mock(sdk)
+        run: bash scripts/ci/grep-vi-mock.sh
+
+      - run: npm run typecheck
+      - run: npm run lint
+      - run: npm run format:check
+      - run: npm test
+      - run: npm run test:coverage
+
+  integration:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: palisade
+    services:
+      ddb:
+        image: amazon/dynamodb-local:latest
+        ports:
+          - 8000:8000
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "24"
+          cache: npm
+          cache-dependency-path: palisade/package-lock.json
+      - run: npm ci
+      - name: Run integration tests (dynamodb-local)
+        run: npm run test:integration
+        env:
+          DDB_LOCAL_ENDPOINT: http://localhost:8000
+
+  eval:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: palisade
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "24"
+          cache: npm
+          cache-dependency-path: palisade/package-lock.json
+      - run: npm ci
+      - name: Run canonical eval
+        run: npm run eval:run
+      - name: Compare against baseline (regression gate)
+        run: npx tsx scripts/eval/compare.ts

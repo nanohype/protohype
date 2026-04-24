@@ -1,0 +1,41 @@
+{
+  "name": "palisade-queue",
+  "version": "0.1.0",
+  "description": "SQS fan-out for palisade",
+  "type": "module",
+  "main": "dist/queue/index.js",
+  "types": "dist/queue/index.d.ts",
+  "exports": {
+    ".": "./dist/queue/index.js",
+    "./providers": "./dist/queue/providers/index.js"
+  },
+  "scripts": {
+    "build": "tsc",
+    "dev": "tsx --watch src/queue/index.ts",
+    "start": "node dist/queue/index.js",
+    "lint": "eslint src/",
+    "format": "prettier --write .",
+    "format:check": "prettier --check .",
+    "test": "vitest run",
+    "test:watch": "vitest"
+  },
+  "dependencies": {
+    "@opentelemetry/api": "^1.9.0",
+    "bullmq": "^5.0.0",
+    "@aws-sdk/client-sqs": "^3.750.0",
+    "zod": "^3.24.0"
+  },
+  "devDependencies": {
+    "@eslint/js": "^9.20.0",
+    "@types/node": "^22.0.0",
+    "eslint": "^9.20.0",
+    "prettier": "^3.5.0",
+    "tsx": "^4.19.0",
+    "typescript": "^5.8.0",
+    "typescript-eslint": "^8.25.0",
+    "vitest": "^3.1.0"
+  },
+  "engines": {
+    "node": ">=22"
+  }
+}

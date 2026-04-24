@@ -1,0 +1,14 @@
+{
+  "summary": {
+    "tpr": 0.55,
+    "fpr": 0.02,
+    "attacks": { "total": 39, "blocked": 22 },
+    "benign": { "total": 77, "blocked": 1 },
+    "perLayerTpr": {
+      "heuristics": 0.55,
+      "classifier": 0.0,
+      "corpus-match": 0.0
+    }
+  },
+  "notes": "Initial baseline captured against the fake classifier and an empty corpus — heuristics carries the pipeline end-to-end. Tighten once real Bedrock Haiku classifier is wired in staging. Bump via scripts/eval/update-baseline.ts after intentional improvements."
+}

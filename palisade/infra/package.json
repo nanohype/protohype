@@ -1,0 +1,28 @@
+{
+  "name": "palisade-infra",
+  "version": "0.1.0",
+  "description": "AWS CDK stack for palisade",
+  "private": true,
+  "scripts": {
+    "build": "tsc",
+    "cdk": "npx cdk",
+    "synth": "npx cdk synth",
+    "deploy": "npx cdk deploy --require-approval never",
+    "diff": "npx cdk diff",
+    "destroy": "npx cdk destroy"
+  },
+  "dependencies": {
+    "@nanohype/cdk-constructs": "github:nanohype/cdk-constructs#v0.1.0",
+    "aws-cdk-lib": "^2.250.0",
+    "constructs": "^10.6.0"
+  },
+  "devDependencies": {
+    "@types/node": "^24.12.2",
+    "aws-cdk": "^2.1118.0",
+    "ts-node": "^10.9.2",
+    "typescript": "^5.8.0"
+  },
+  "engines": {
+    "node": ">=24"
+  }
+}

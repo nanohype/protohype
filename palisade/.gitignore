@@ -1,0 +1,14 @@
+node_modules/
+dist/
+coverage/
+*.tsbuildinfo
+*.log
+.env
+.env.*
+!.env.example
+packages/*/node_modules/
+packages/*/dist/
+infra/cdk.out/
+infra/node_modules/
+infra/dist/
+eval/results.json
