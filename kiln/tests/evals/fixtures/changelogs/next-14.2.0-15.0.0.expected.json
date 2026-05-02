@@ -1,0 +1,10 @@
+{
+  "ids": [
+    "async-cookies-headers-draftmode-searchparams",
+    "behavior-change-fetch-default-no-store",
+    "remove-image-domains-config",
+    "drop-node-18",
+    "remove-experimental-serveractions-flag"
+  ],
+  "notes": "5 breaking. Async-ifying multiple request-scoped APIs counts as a single breaking change; classifier may split this into four. If split, count all four as TP."
+}

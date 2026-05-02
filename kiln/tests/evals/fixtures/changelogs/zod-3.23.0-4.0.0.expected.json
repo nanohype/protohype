@@ -1,0 +1,10 @@
+{
+  "ids": [
+    "remove-string-nonempty",
+    "remove-refine-positional-error-string",
+    "readonly-zoderror-issues-path",
+    "record-requires-key-schema",
+    "behavior-change-zoddefault-null"
+  ],
+  "notes": "5 breaking. z.preprocess deprecation is not breaking in 4.x; z.branded is additive."
+}

@@ -1,0 +1,12 @@
+{
+  "ids": [
+    "remove-reactdom-render",
+    "remove-reactdom-hydrate",
+    "remove-unmountcomponentatnode",
+    "remove-finddomnode",
+    "remove-defaultprops-function-components",
+    "remove-string-refs",
+    "behavior-change-useid-ssr"
+  ],
+  "notes": "6 hard removals + 1 behavior change. UNSAFE_* deprecations don't count as breaking in 19.0."
+}

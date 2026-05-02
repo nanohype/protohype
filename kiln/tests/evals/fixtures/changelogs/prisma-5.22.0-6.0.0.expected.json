@@ -1,0 +1,10 @@
+{
+  "ids": [
+    "drop-node-16",
+    "behavior-change-queryraw-bigint",
+    "remove-rejectonnotfound-option",
+    "remove-migrate-create-only-flag",
+    "remove-errorformat-colorless"
+  ],
+  "notes": "5 breaking. Node drop + API removals + one runtime behavior shift."
+}

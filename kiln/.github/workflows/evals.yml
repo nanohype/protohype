@@ -1,0 +1,34 @@
+name: kiln-evals
+
+on:
+  schedule:
+    - cron: "0 9 * * 1" # Mondays at 09:00 UTC — weekly baseline
+  workflow_dispatch:
+
+defaults:
+  run:
+    working-directory: kiln
+
+permissions:
+  id-token: write # for OIDC to dev AWS account
+  contents: read
+
+jobs:
+  evals:
+    runs-on: ubuntu-latest
+    env:
+      AWS_REGION: us-west-2
+      KILN_RUN_EVALS: "1"
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: "24", cache: "npm", cache-dependency-path: "kiln/package-lock.json" }
+      - uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.KILN_EVAL_ROLE_ARN }}
+          aws-region: us-west-2
+      - run: npm ci
+      - run: npm run test:evals
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with: { name: kiln-eval-results, path: kiln/coverage }

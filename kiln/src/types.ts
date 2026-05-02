@@ -1,208 +1,152 @@
-/**
- * Core domain types for Kiln — dependency upgrade automation service.
- */
+// Branded ("nominal") ids. Constructing a TeamId requires going through the
+// identity verification path — cross-tenant reads become compile errors, not
+// runtime bugs waiting to happen.
+export type TeamId = string & { readonly __brand: "TeamId" };
+export type UpgradeId = string & { readonly __brand: "UpgradeId" };
+export type InstallationId = number & { readonly __brand: "InstallationId" };
 
-// ── Team configuration ───────────────────────────────────────────────────────
+export const asTeamId = (s: string): TeamId => s as TeamId;
+export const asUpgradeId = (s: string): UpgradeId => s as UpgradeId;
+export const asInstallationId = (n: number): InstallationId => n as InstallationId;
+
+// ── Team configuration ──────────────────────────────────────────────────────
+export type TargetVersionPolicy = "latest" | "minor-only" | "patch-only";
 
 export type GroupingStrategy =
   | { kind: "per-dep" }
-  | { kind: "per-family"; pattern: string } // e.g. "@aws-sdk/*"
+  | { kind: "per-family"; pattern: string }
   | { kind: "per-release-window"; windowDays: number };
-
-export interface TeamConfig {
-  teamId: string;
-  orgId: string;
-  repos: RepoConfig[];
-  targetVersionPolicy: "latest" | "minor-only" | "patch-only";
-  reviewSlaDays: number;
-  slackChannel: string | null;
-  linearProjectId: string | null;
-  groupingStrategy: GroupingStrategy;
-  pinnedSkipList: string[]; // dep names to never upgrade
-  createdAt: string; // ISO-8601
-  updatedAt: string; // ISO-8601
-}
 
 export interface RepoConfig {
   owner: string;
   repo: string;
-  installationId: number;
-  watchedDeps: string[]; // top-level dep names to watch
-  defaultBranch: string;
+  installationId: InstallationId;
+  watchedDeps: string[];
 }
 
-// ── Upgrade lifecycle ─────────────────────────────────────────────────────────
-
-export type UpgradeStatus =
-  | "pending"
-  | "changelog-fetched"
-  | "analyzed"
-  | "patched"
-  | "pr-opened"
-  | "merged"
-  | "failed"
-  | "skipped";
-
-export interface UpgradeRecord {
-  upgradeId: string;
-  teamId: string;
-  owner: string;
-  repo: string;
-  dep: string;
-  fromVersion: string;
-  toVersion: string;
-  groupId: string | null; // non-null when grouped
-  status: UpgradeStatus;
-  prNumber: number | null;
-  prUrl: string | null;
-  changelogUrls: string[];
-  breakingChanges: BreakingChange[];
-  patchedFiles: PatchedFile[];
-  humanReviewItems: HumanReviewItem[];
-  errorMessage: string | null;
+export interface TeamConfig {
+  teamId: TeamId;
+  orgId: string;
+  repos: RepoConfig[];
+  targetVersionPolicy: TargetVersionPolicy;
+  reviewSlaDays: number;
+  slackChannel: string | null;
+  linearProjectId: string | null;
+  groupingStrategy: GroupingStrategy;
+  pinnedSkipList: string[];
   createdAt: string;
   updatedAt: string;
 }
 
+// ── Upgrade pipeline ────────────────────────────────────────────────────────
+export interface UpgradeJob {
+  teamId: TeamId;
+  upgradeId: UpgradeId;
+  repo: { owner: string; name: string; installationId: InstallationId };
+  pkg: string;
+  fromVersion: string;
+  toVersion: string;
+  enqueuedAt: string;
+  groupKey: string; // canonical groupId for ordering
+}
+
 export interface BreakingChange {
+  id: string;
+  title: string;
+  severity: "breaking" | "deprecation" | "behavior-change";
   description: string;
-  category: "api-removal" | "api-rename" | "signature-change" | "behavior-change" | "other";
-  affectedSymbol: string | null;
+  affectedSymbols: string[];
+  changelogUrl: string;
 }
 
-export interface PatchedFile {
-  filePath: string;
-  lineStart: number;
-  lineEnd: number;
-  originalCode: string;
-  patchedCode: string;
-  breakingChangeDescription: string;
-}
-
-export interface HumanReviewItem {
-  filePath: string;
+export interface CallSite {
+  repo: string;
+  path: string;
   line: number;
-  reason: string;
-  suggestion: string | null;
+  symbol: string;
+  snippet: string;
 }
 
-// ── Changelog cache ───────────────────────────────────────────────────────────
-
-export interface ChangelogEntry {
-  dep: string;
-  version: string;
-  fetchedAt: string;
-  sourceUrl: string;
-  rawContent: string;
-  breakingChanges: BreakingChange[];
-  expiresAt: number; // unix seconds TTL
+export interface FilePatch {
+  path: string;
+  before: string;
+  after: string;
+  citations: string[]; // changelog URLs + file:line refs
 }
 
-// ── GitHub App ────────────────────────────────────────────────────────────────
-
-export interface GitHubAppSecret {
-  appId: string;
-  privateKey: string; // PEM — loaded from Secrets Manager
-  webhookSecret: string;
-}
-
-export interface InstallationToken {
-  token: string;
-  expiresAt: string; // ISO-8601
-  installationId: number;
-}
-
-// ── Rate limit state ──────────────────────────────────────────────────────────
-
-export interface RateLimitBucket {
-  key: string; // "github-api"
-  tokens: number;
-  lastRefillAt: number; // unix ms
-}
-
-// ── API request / response shapes ────────────────────────────────────────────
-
-export interface CreateTeamConfigRequest {
-  orgId: string;
-  repos: RepoConfig[];
-  targetVersionPolicy?: TeamConfig["targetVersionPolicy"];
-  reviewSlaDays?: number;
-  slackChannel?: string;
-  linearProjectId?: string;
-  groupingStrategy?: GroupingStrategy;
-  pinnedSkipList?: string[];
-}
-
-export interface TriggerUpgradeRequest {
+export interface PrSpec {
   owner: string;
   repo: string;
-  dep: string;
-  toVersion: string;
+  baseBranch: string;
+  headBranch: string;
+  title: string;
+  body: string;
+  files: FilePatch[];
 }
 
-export interface UpgradeSummary {
-  upgradeId: string;
-  dep: string;
+export interface PrRef {
+  owner: string;
+  repo: string;
+  number: number;
+  url: string;
+  headSha: string;
+}
+
+// ── Audit ───────────────────────────────────────────────────────────────────
+export type AuditStatus =
+  | "pending"
+  | "classifying"
+  | "scanning"
+  | "synthesizing"
+  | "pr-opened"
+  | "failed"
+  | "skipped";
+
+export interface AuditRecord {
+  teamId: TeamId;
+  upgradeId: UpgradeId;
+  pkg: string;
   fromVersion: string;
   toVersion: string;
-  status: UpgradeStatus;
-  prUrl: string | null;
-  breakingChangesCount: number;
-  patchedFilesCount: number;
-  humanReviewItemsCount: number;
-  createdAt: string;
+  status: AuditStatus;
+  startedAt: string;
+  finishedAt?: string;
+  prRef?: PrRef;
+  errorMessage?: string;
+  modelsUsed?: { classifier?: string; synthesizer?: string };
 }
 
-// ── Bedrock payloads ──────────────────────────────────────────────────────────
+// ── Identity (from WorkOS JWT verification) ────────────────────────────────
+export interface VerifiedIdentity {
+  teamId: TeamId;
+  userId: string;
+  email?: string;
+  scopes: string[];
+  issuer: string;
+  audience: string;
+}
 
-export interface ChangelogClassificationRequest {
-  dep: string;
+// ── Result — errors-as-values at adapter boundaries ────────────────────────
+export type Result<T, E = DomainError> = { ok: true; value: T } | { ok: false; error: E };
+
+export const ok = <T>(value: T): Result<T, never> => ({ ok: true, value });
+export const err = <E>(error: E): Result<never, E> => ({ ok: false, error });
+
+export type DomainError =
+  | { kind: "NotFound"; what: string }
+  | { kind: "Validation"; message: string; path?: string }
+  | { kind: "Upstream"; source: string; status?: number; message: string }
+  | { kind: "Timeout"; source: string; timeoutMs: number }
+  | { kind: "RateLimited"; source: string; retryAfterMs?: number }
+  | { kind: "Forbidden"; source: string; message: string }
+  | { kind: "Conflict"; message: string }
+  | { kind: "Internal"; message: string; cause?: unknown };
+
+// ── Idempotency key (SQS message-dedupe + PR ledger key) ───────────────────
+export interface PrIdempotencyKey {
+  teamId: TeamId;
+  repo: string;
+  pkg: string;
   fromVersion: string;
   toVersion: string;
-  rawChangelog: string;
-}
-
-export interface ChangelogClassificationResult {
-  hasBreakingChanges: boolean;
-  breakingChanges: BreakingChange[];
-  changelogUrls: string[];
-}
-
-export interface MigrationSynthesisRequest {
-  dep: string;
-  fromVersion: string;
-  toVersion: string;
-  breakingChanges: BreakingChange[];
-  usageSites: UsageSite[];
-}
-
-export interface UsageSite {
-  filePath: string;
-  lineNumber: number;
-  lineContent: string;
-  symbol: string;
-}
-
-export interface MigrationSynthesisResult {
-  patches: ProposedPatch[];
-  humanReviewItems: HumanReviewItem[];
-}
-
-export interface ProposedPatch {
-  filePath: string;
-  lineStart: number;
-  lineEnd: number;
-  originalCode: string;
-  patchedCode: string;
-  breakingChangeDescription: string;
-  confidence: "high" | "medium" | "low";
-}
-
-// ── Okta identity ─────────────────────────────────────────────────────────────
-
-export interface OktaIdentity {
-  sub: string; // Okta user ID
-  email: string;
-  groups: string[]; // Okta group memberships (drives teamId ACLs)
-  teamIds: string[]; // derived from groups via convention kiln-team-<teamId>
 }

@@ -1,154 +1,103 @@
-/**
- * npm registry poller — watches deps for new versions and enqueues upgrade jobs.
- * Runs on an interval; graceful shutdown on SIGTERM.
- */
-import { fetchLatestVersion, compareSemver } from "../core/npm/registry.js";
-import { getDocumentClient } from "../db/client.js";
-import { QueryCommand } from "@aws-sdk/lib-dynamodb";
-import { config } from "../config.js";
-import { log, withSpan } from "../telemetry/otel.js";
-import type { TeamConfig, RepoConfig } from "../types.js";
-import { runUpgradePipeline } from "./upgrader.js";
-import { groupUpgrades, filterEligibleUpgrades } from "../core/grouping/strategy.js";
+// Poller — scheduled every N minutes. For each team, for each watched dep,
+// asks npm for the latest, filters through the policy + skip list, enqueues
+// an upgrade job per eligible dep. FIFO dedup collapses same-version retries.
 
-// Track last-seen versions in memory (poller is single-instance)
-const lastSeenVersions = new Map<string, string>(); // dep → version
+import { randomUUID } from "node:crypto";
+import { isEligibleUpgrade, isSkipped } from "../core/npm/policy.js";
+import type { LoggerPort, Ports } from "../core/ports.js";
+import { metrics as otelMetrics, MetricNames } from "../telemetry/metrics.js";
+import { withSpan } from "../telemetry/tracing.js";
+import { asUpgradeId, type TeamConfig, type UpgradeJob } from "../types.js";
 
-let pollTimer: ReturnType<typeof setTimeout> | null = null;
-let isRunning = false;
-
-export function startPoller(): void {
-  if (isRunning) return;
-  isRunning = true;
-  log("info", "npm poller starting", { intervalMs: config.npm.pollIntervalMs });
-  schedulePoll();
+export interface PollerMetrics {
+  teamsScanned: number;
+  depsChecked: number;
+  enqueued: number;
+  skipped: number;
+  errors: number;
 }
 
-export function stopPoller(): void {
-  isRunning = false;
-  if (pollTimer) {
-    clearTimeout(pollTimer);
-    pollTimer = null;
+export async function runPoller(ports: Ports): Promise<PollerMetrics> {
+  const start = Date.now();
+  const result = await withSpan("kiln.poller.cycle", () => runPollerInner(ports));
+  otelMetrics.durationMs(MetricNames.PollerCycleDurationMs, Date.now() - start);
+  otelMetrics.count(MetricNames.PollerEnqueuedCount, result.enqueued);
+  otelMetrics.count(MetricNames.PollerScannedCount, result.depsChecked);
+  return result;
+}
+
+async function runPollerInner(ports: Ports): Promise<PollerMetrics> {
+  const log = ports.logger.child({ worker: "poller" });
+  const result: PollerMetrics = {
+    teamsScanned: 0,
+    depsChecked: 0,
+    enqueued: 0,
+    skipped: 0,
+    errors: 0,
+  };
+
+  const teamsResult = await ports.teamConfig.list();
+  if (!teamsResult.ok) {
+    log.error("failed to list teams", { error: teamsResult.error });
+    result.errors++;
+    return result;
   }
-  log("info", "npm poller stopped");
-}
 
-function schedulePoll(): void {
-  if (!isRunning) return;
-  pollTimer = setTimeout(async () => {
-    await runPollCycle();
-    schedulePoll();
-  }, config.npm.pollIntervalMs);
-}
-
-async function runPollCycle(): Promise<void> {
-  await withSpan("poll-cycle", async () => {
-    log("info", "Poll cycle starting");
-
-    const teamConfigs = await loadAllTeamConfigs();
-    log("info", "Loaded team configs for polling", { count: teamConfigs.length });
-
-    for (const teamConfig of teamConfigs) {
-      await pollTeam(teamConfig);
-    }
-
-    log("info", "Poll cycle complete");
-  });
-}
-
-async function pollTeam(teamConfig: TeamConfig): Promise<void> {
-  const { teamId, repos, pinnedSkipList, groupingStrategy, targetVersionPolicy } = teamConfig;
-
-  for (const repoConfig of repos) {
-    const depUpgrades = await detectUpgradesForRepo(
-      repoConfig,
-      pinnedSkipList,
-      targetVersionPolicy,
-    );
-
-    if (depUpgrades.length === 0) continue;
-
-    const eligibleUpgrades = filterEligibleUpgrades(depUpgrades, pinnedSkipList);
-    const groups = groupUpgrades(eligibleUpgrades, groupingStrategy, repoConfig);
-
-    for (const group of groups) {
-      // Run upgrade pipeline for each group
-      // In production this would be enqueued to SQS for fan-out; for v1 we run inline
-      for (const dep of group.deps) {
-        try {
-          await runUpgradePipeline({
-            teamId,
-            repoConfig,
-            dep: dep.dep,
-            fromVersion: dep.fromVersion,
-            toVersion: dep.toVersion,
-            groupId: group.groupId,
-          });
-        } catch (err) {
-          log("error", "Upgrade pipeline error in poller", {
-            teamId,
-            dep: dep.dep,
-            error: String(err),
-          });
-        }
-      }
-    }
+  for (const team of teamsResult.value) {
+    result.teamsScanned++;
+    await scanTeam(ports, team, result, log);
   }
+
+  log.info("poll cycle complete", { ...result });
+  return result;
 }
 
-async function detectUpgradesForRepo(
-  repoConfig: RepoConfig,
-  pinnedSkipList: string[],
-  targetVersionPolicy: TeamConfig["targetVersionPolicy"],
-): Promise<Array<{ dep: string; fromVersion: string; toVersion: string }>> {
-  const upgrades: Array<{ dep: string; fromVersion: string; toVersion: string }> = [];
-
-  for (const dep of repoConfig.watchedDeps) {
-    if (pinnedSkipList.includes(dep)) continue;
-
-    try {
-      const info = await fetchLatestVersion(dep);
-      const lastSeen = lastSeenVersions.get(dep);
-
-      if (!lastSeen) {
-        // First time seeing this dep — record current version, don't trigger upgrade
-        lastSeenVersions.set(dep, info.latestVersion);
+async function scanTeam(
+  ports: Ports,
+  team: TeamConfig,
+  result: PollerMetrics,
+  log: LoggerPort,
+): Promise<void> {
+  // Each (repo, pkg) is independent; we don't parallelize here to keep the
+  // poller's npm request volume predictable.
+  for (const repo of team.repos) {
+    for (const pkg of repo.watchedDeps) {
+      result.depsChecked++;
+      if (isSkipped(pkg, team.pinnedSkipList)) {
+        result.skipped++;
         continue;
       }
-
-      if (compareSemver(info.latestVersion, lastSeen) <= 0) continue; // no new version
-
-      // Check policy
-      if (targetVersionPolicy === "patch-only") {
-        const [lMaj, lMin] = info.latestVersion.split(".").map(Number);
-        const [sMaj, sMin] = lastSeen.split(".").map(Number);
-        if (lMaj !== sMaj || lMin !== sMin) continue; // skip non-patch upgrades
-      } else if (targetVersionPolicy === "minor-only") {
-        const [lMaj] = info.latestVersion.split(".").map(Number);
-        const [sMaj] = lastSeen.split(".").map(Number);
-        if (lMaj !== sMaj) continue; // skip major upgrades
+      const latest = await ports.npm.getLatestVersion(pkg);
+      if (!latest.ok) {
+        log.warn("npm lookup failed", { pkg, error: latest.error });
+        result.errors++;
+        continue;
       }
-
-      log("info", "New version detected", { dep, from: lastSeen, to: info.latestVersion });
-      upgrades.push({ dep, fromVersion: lastSeen, toVersion: info.latestVersion });
-      lastSeenVersions.set(dep, info.latestVersion);
-    } catch (err) {
-      log("warn", "Version check failed for dep", { dep, err: String(err) });
+      // TODO v1.1 — resolve current version from repo package.json.
+      // For v1 we trust the candidate upgrade against a policy-minimum; the PR
+      // ledger's idempotency key will prevent re-opening the same PR.
+      const currentVersion = "0.0.0";
+      if (!isEligibleUpgrade(currentVersion, latest.value.version, team.targetVersionPolicy)) {
+        result.skipped++;
+        continue;
+      }
+      const job: UpgradeJob = {
+        teamId: team.teamId,
+        upgradeId: asUpgradeId(randomUUID()),
+        repo: { owner: repo.owner, name: repo.repo, installationId: repo.installationId },
+        pkg,
+        fromVersion: currentVersion,
+        toVersion: latest.value.version,
+        enqueuedAt: ports.clock.now().toISOString(),
+        groupKey: `${team.teamId}:${repo.owner}/${repo.repo}:${pkg}`,
+      };
+      const enq = await ports.queue.enqueue(job);
+      if (!enq.ok) {
+        log.warn("enqueue failed", { pkg, error: enq.error });
+        result.errors++;
+        continue;
+      }
+      result.enqueued++;
     }
   }
-
-  return upgrades;
-}
-
-async function loadAllTeamConfigs(): Promise<TeamConfig[]> {
-  const client = getDocumentClient();
-  // Full scan — poller has platform-level access
-  const { Items = [] } = await client.send(
-    new QueryCommand({
-      TableName: config.dynamodb.teamsTable,
-      Select: "ALL_ATTRIBUTES",
-      KeyConditionExpression: undefined as never,
-    }),
-  );
-  return Items as TeamConfig[];
 }

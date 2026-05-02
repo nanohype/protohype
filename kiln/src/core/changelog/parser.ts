@@ -1,81 +1,54 @@
-/**
- * Changelog parser — extracts version-specific content from raw changelog text.
- * Used to isolate the relevant section before sending to Bedrock for classification.
- */
+// Pure changelog parser. Extracts the section for a specific version from a
+// markdown-ish changelog (handles "## [1.2.3]", "## 1.2.3", "## v1.2.3" and
+// "# 1.2.3" variants). No I/O.
 
-/**
- * Extract the changelog section relevant to a specific version transition.
- * Handles common formats: Keep a Changelog, GitHub Releases markdown, simple headers.
- */
-export function extractVersionSection(
-  rawChangelog: string,
-  fromVersion: string,
-  toVersion: string,
-): string {
-  // Normalize version strings (strip leading 'v')
-  const normalizeV = (v: string) => v.replace(/^v/, "");
-  const to = normalizeV(toVersion);
-  const from = normalizeV(fromVersion);
-
-  // Split on heading patterns that look like version headers
-  const lines = rawChangelog.split("\n");
-
-  let capturing = false;
-  let section: string[] = [];
-
-  for (const line of lines) {
-    // Match version headers: ## [1.2.3], ## v1.2.3, # 1.2.3, ### 1.2.3
-    const headerMatch = line.match(/^#{1,3}\s+\[?v?([\d.]+)/);
-
-    if (headerMatch) {
-      const headerVer = headerMatch[1];
-
-      if (headerVer === to) {
-        capturing = true;
-        section = [line];
-        continue;
-      }
-
-      if (capturing && headerVer === from) {
-        // Reached the from-version section — stop
-        break;
-      }
-
-      if (capturing && headerVer !== to) {
-        // Hit another version header we don't care about — stop if below from
-        const [toMaj, toMin] = to.split(".").map(Number);
-        const [hMaj, hMin] = headerVer.split(".").map(Number);
-        if ((hMaj ?? 0) < (toMaj ?? 0) || ((hMaj ?? 0) === (toMaj ?? 0) && (hMin ?? 0) < (toMin ?? 0))) {
-          break;
-        }
-      }
-    }
-
-    if (capturing) {
-      section.push(line);
-    }
-  }
-
-  const result = section.join("\n").trim();
-
-  // If we couldn't isolate a section, return first 8000 chars of raw content
-  return result.length > 0 ? result.slice(0, 16_000) : rawChangelog.slice(0, 8_000);
+export interface ChangelogSection {
+  version: string;
+  date?: string;
+  body: string;
 }
 
-/**
- * Detect if the changelog section mentions breaking changes.
- * Fast heuristic check before sending to Bedrock — saves Haiku calls on patch-only releases.
- */
-export function hasPotentialBreakingChanges(changelogSection: string): boolean {
-  const patterns = [
-    /breaking\s+change/i,
-    /\bBREAKING\b/,
-    /removed?\s+(api|method|function|export|class|interface|type)/i,
-    /deprecated.*removed/i,
-    /no\s+longer\s+supported/i,
-    /migration\s+(required|guide|needed)/i,
-    /incompatible/i,
-    /\bMIGRAT/i,
-  ];
-  return patterns.some((p) => p.test(changelogSection));
+const HEADER = /^(#{1,3})\s+v?\[?(\d+\.\d+\.\d+(?:-[\w.]+)?)\]?\s*(?:-\s*(\d{4}-\d{2}-\d{2}))?/;
+
+export function parseChangelog(raw: string): ChangelogSection[] {
+  const lines = raw.split("\n");
+  const sections: ChangelogSection[] = [];
+  let current: ChangelogSection | null = null;
+
+  for (const line of lines) {
+    const match = HEADER.exec(line);
+    if (match) {
+      if (current) sections.push(current);
+      const version = match[2];
+      if (!version) {
+        current = null;
+        continue;
+      }
+      const date = match[3];
+      current = date ? { version, date, body: "" } : { version, body: "" };
+      continue;
+    }
+    if (current) current.body += `${line}\n`;
+  }
+  if (current) sections.push(current);
+
+  return sections.map((s) => ({ ...s, body: s.body.trim() }));
+}
+
+export function extractVersionSection(raw: string, version: string): ChangelogSection | null {
+  return parseChangelog(raw).find((s) => s.version === version) ?? null;
+}
+
+export function extractRangeSections(
+  raw: string,
+  fromVersion: string,
+  toVersion: string,
+): ChangelogSection[] {
+  const sections = parseChangelog(raw);
+  const fromIdx = sections.findIndex((s) => s.version === fromVersion);
+  const toIdx = sections.findIndex((s) => s.version === toVersion);
+  if (toIdx === -1) return [];
+  // Changelogs are typically newest-first. Range = (toIdx .. fromIdx), toIdx inclusive.
+  const end = fromIdx === -1 ? sections.length : fromIdx;
+  return sections.slice(toIdx, end);
 }

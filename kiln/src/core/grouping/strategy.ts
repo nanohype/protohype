@@ -1,110 +1,63 @@
-/**
- * PR grouping strategies — matches Renovate's groupName config semantics.
- * Teams migrate in place without relearning the knob.
- */
-import type { GroupingStrategy, RepoConfig } from "../../types.js";
+// Grouping strategy — matches Renovate's `groupName` semantics.
+// A team configures one strategy; the poller uses it to decide which pending
+// upgrades are consolidated into a single PR run.
 
-export interface DepVersion {
-  dep: string;
+import type { GroupingStrategy } from "../../types.js";
+
+export interface PendingUpgrade {
+  pkg: string;
   fromVersion: string;
   toVersion: string;
-}
-
-export interface UpgradeGroup {
-  groupId: string;
-  label: string;
-  deps: DepVersion[];
+  detectedAt: string; // ISO-8601
 }
 
 /**
- * Group a list of dependency upgrades according to the team's grouping strategy.
- * Returns a list of groups, each representing one PR.
+ * Partition pending upgrades into groups. Each group becomes one PR run.
  */
 export function groupUpgrades(
-  upgrades: DepVersion[],
   strategy: GroupingStrategy,
-  repo: RepoConfig,
-): UpgradeGroup[] {
+  upgrades: PendingUpgrade[],
+  now: Date,
+): PendingUpgrade[][] {
+  if (upgrades.length === 0) return [];
   switch (strategy.kind) {
     case "per-dep":
-      return groupPerDep(upgrades);
-
+      return upgrades.map((u) => [u]);
     case "per-family":
-      return groupPerFamily(upgrades, strategy.pattern);
-
+      return groupByFamily(upgrades, strategy.pattern);
     case "per-release-window":
-      // All upgrades in the window go into one consolidated PR
-      return groupAllTogether(upgrades, `${repo.owner}/${repo.repo}`);
+      return groupByWindow(upgrades, strategy.windowDays, now);
   }
 }
 
-function groupPerDep(upgrades: DepVersion[]): UpgradeGroup[] {
-  return upgrades.map((u) => ({
-    groupId: `${u.dep}@${u.toVersion}`,
-    label: `${u.dep} ${u.fromVersion} → ${u.toVersion}`,
-    deps: [u],
-  }));
-}
-
-function groupPerFamily(upgrades: DepVersion[], pattern: string): UpgradeGroup[] {
-  // Convert glob pattern to regex: @aws-sdk/* → /^@aws-sdk\//
-  const familyRegex = globToRegex(pattern);
-  const familyGroup: DepVersion[] = [];
-  const soloGroups: UpgradeGroup[] = [];
-
+function groupByFamily(upgrades: PendingUpgrade[], pattern: string): PendingUpgrade[][] {
+  const matcher = toMatcher(pattern);
+  const family: PendingUpgrade[] = [];
+  const singles: PendingUpgrade[][] = [];
   for (const u of upgrades) {
-    if (familyRegex.test(u.dep)) {
-      familyGroup.push(u);
-    } else {
-      soloGroups.push({
-        groupId: `${u.dep}@${u.toVersion}`,
-        label: `${u.dep} ${u.fromVersion} → ${u.toVersion}`,
-        deps: [u],
-      });
-    }
+    if (matcher(u.pkg)) family.push(u);
+    else singles.push([u]);
   }
+  return family.length > 0 ? [family, ...singles] : singles;
+}
 
-  const groups: UpgradeGroup[] = [...soloGroups];
-
-  if (familyGroup.length > 0) {
-    const versions = familyGroup.map((u) => u.toVersion);
-    const uniqueVersions = [...new Set(versions)];
-    const versionLabel = uniqueVersions.length === 1 ? uniqueVersions[0] : uniqueVersions.join(", ");
-    groups.push({
-      groupId: `family:${pattern}@${versionLabel}`,
-      label: `${pattern} family upgrade (${familyGroup.length} packages)`,
-      deps: familyGroup,
-    });
-  }
-
+function groupByWindow(
+  upgrades: PendingUpgrade[],
+  windowDays: number,
+  now: Date,
+): PendingUpgrade[][] {
+  const cutoff = now.getTime() - windowDays * 24 * 60 * 60 * 1000;
+  const inWindow = upgrades.filter((u) => new Date(u.detectedAt).getTime() >= cutoff);
+  const outOfWindow = upgrades.filter((u) => new Date(u.detectedAt).getTime() < cutoff);
+  const groups: PendingUpgrade[][] = [];
+  if (inWindow.length > 0) groups.push(inWindow);
+  for (const u of outOfWindow) groups.push([u]);
   return groups;
 }
 
-function groupAllTogether(upgrades: DepVersion[], repoLabel: string): UpgradeGroup[] {
-  if (upgrades.length === 0) return [];
-  return [
-    {
-      groupId: `window:${repoLabel}:${Date.now()}`,
-      label: `Release window upgrade (${upgrades.length} packages)`,
-      deps: upgrades,
-    },
-  ];
-}
-
-function globToRegex(pattern: string): RegExp {
-  const escaped = pattern
-    .replace(/[.+^${}()|[\]\\]/g, "\\$&") // escape regex special chars
-    .replace(/\*/g, ".*"); // glob * → .*
-  return new RegExp(`^${escaped}$`);
-}
-
-/** Filter out pinned-skip deps and deps already on the target version. */
-export function filterEligibleUpgrades(
-  upgrades: DepVersion[],
-  pinnedSkipList: string[],
-): DepVersion[] {
-  return upgrades.filter(
-    (u) =>
-      !pinnedSkipList.includes(u.dep) && u.fromVersion !== u.toVersion,
-  );
+/** Minimal glob: `*` = non-separator, `**` = anything. Good enough for "@aws-sdk/*". */
+function toMatcher(pattern: string): (s: string) => boolean {
+  const escaped = pattern.replace(/[.+^${}()|[\]\\]/g, "\\$&");
+  const regex = new RegExp(`^${escaped.replace(/\*\*/g, ".*").replace(/\*/g, "[^/]*")}$`);
+  return (s) => regex.test(s);
 }

@@ -1,5 +1,13 @@
 node_modules/
 dist/
 coverage/
+cdk.out/
 *.js.map
 .env
+.env.local
+*.log
+.DS_Store
+
+# Populated secrets files — only the template is tracked.
+kiln-secrets.*.json
+!kiln-secrets.template.json

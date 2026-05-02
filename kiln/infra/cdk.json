@@ -1,0 +1,14 @@
+{
+  "app": "tsx infra/bin/kiln.ts",
+  "watch": {
+    "include": ["infra/**/*.ts", "src/**/*.ts"],
+    "exclude": ["README.md", "cdk*.json", "**/*.d.ts", "**/*.js", "tsconfig.json", "package*.json", ".env*", "dist", "cdk.out", "node_modules"]
+  },
+  "context": {
+    "@aws-cdk/aws-apigateway:usagePlanKeyOrderInsensitiveId": true,
+    "@aws-cdk/core:stackRelativeExports": true,
+    "@aws-cdk/aws-lambda:recognizeLayerVersion": true,
+    "@aws-cdk/aws-cloudfront:defaultSecurityPolicyTLSv1.2_2021": true,
+    "@aws-cdk/aws-dynamodb:retainTableReplica": true
+  }
+}

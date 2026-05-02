@@ -2,88 +2,99 @@ name: kiln-ci
 
 on:
   pull_request:
-    paths:
-      - "kiln/**"
+    paths: ["kiln/**", ".github/workflows/kiln-ci.yml"]
   push:
-    branches:
-      - "feat/kiln"
-    paths:
-      - "kiln/**"
+    branches: [main]
+    paths: ["kiln/**"]
 
 defaults:
   run:
     working-directory: kiln
 
-jobs:
-  build:
-    name: Build
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
-        with:
-          node-version: "24"
-          cache: "npm"
-          cache-dependency-path: kiln/package-lock.json
-      - run: npm ci
-      - run: npm run build
-      - run: npx tsc --noEmit --project tsconfig.test.json
+concurrency:
+  group: kiln-ci-${{ github.ref }}
+  cancel-in-progress: true
 
+jobs:
   lint:
-    name: Lint
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
-        with:
-          node-version: "24"
-          cache: "npm"
-          cache-dependency-path: kiln/package-lock.json
+        with: { node-version: "24", cache: "npm", cache-dependency-path: "kiln/package-lock.json" }
       - run: npm ci
       - run: npm run lint
+      - run: npm run format
 
-  test:
-    name: Test
+  typecheck:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
-        with:
-          node-version: "24"
-          cache: "npm"
-          cache-dependency-path: kiln/package-lock.json
+        with: { node-version: "24", cache: "npm", cache-dependency-path: "kiln/package-lock.json" }
       - run: npm ci
-      - run: npm test
-      - name: Upload coverage
-        uses: actions/upload-artifact@v4
-        with:
-          name: kiln-coverage
-          path: kiln/coverage/
+      - run: npm run typecheck
 
-  security-scan:
-    name: Dependency Security Scan
+  unit:
     runs-on: ubuntu-latest
+    needs: [typecheck]
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
-        with:
-          node-version: "24"
-          cache: "npm"
-          cache-dependency-path: kiln/package-lock.json
+        with: { node-version: "24", cache: "npm", cache-dependency-path: "kiln/package-lock.json" }
       - run: npm ci
-      - name: npm audit
-        run: npm audit --audit-level=high
+      - run: npm run test:unit -- --coverage
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with: { name: kiln-coverage, path: kiln/coverage }
 
-  docs:
-    name: Docs
+  integration:
     runs-on: ubuntu-latest
+    needs: [typecheck]
+    services:
+      dynamodb:
+        image: amazon/dynamodb-local:latest
+        ports: ["8000:8000"]
+        options: --health-cmd "curl -f http://localhost:8000/ || exit 1" --health-interval 5s --health-retries 5
+    env:
+      AWS_ENDPOINT_URL_DYNAMODB: http://localhost:8000
+      AWS_REGION: us-west-2
+      AWS_ACCESS_KEY_ID: fake
+      AWS_SECRET_ACCESS_KEY: fake
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
-        with:
-          node-version: "24"
-          cache: "npm"
-          cache-dependency-path: kiln/package-lock.json
+        with: { node-version: "24", cache: "npm", cache-dependency-path: "kiln/package-lock.json" }
       - run: npm ci
-      - run: npm run build
-      - run: npm run docs
+      - run: npm run test:integration
+
+  cdk-synth:
+    runs-on: ubuntu-latest
+    needs: [typecheck]
+    env:
+      CDK_DEFAULT_REGION: us-west-2
+      KILN_WORKOS_ISSUER: https://api.workos.com
+      KILN_WORKOS_CLIENT_ID: client_ci_dummy
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: "24", cache: "npm", cache-dependency-path: "kiln/package-lock.json" }
+      - run: npm ci
+      - run: npm run cdk:synth -- --context deployStage=ci
+
+  security:
+    runs-on: ubuntu-latest
+    needs: [lint]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: "24", cache: "npm", cache-dependency-path: "kiln/package-lock.json" }
+      - run: npm ci --ignore-scripts
+      - name: npm audit (high+)
+        run: npm audit --omit=dev --audit-level=high
+      - name: osv-scanner
+        uses: google/osv-scanner-action/osv-scanner-action@v1
+        with: { scan-args: "kiln/package-lock.json" }
+      - name: gitleaks
+        uses: gitleaks/gitleaks-action@v2
+        env: { GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }} }
